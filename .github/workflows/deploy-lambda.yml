@@ -11,17 +11,69 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
+  discover:
     runs-on: ubuntu-latest
+    outputs:
+      lambda_matrix: ${{ steps.build-matrix.outputs.lambda_matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Discover Lambda folders
+        id: build-matrix
+        env:
+          LAMBDA_NAME_PREFIX: ${{ vars.LAMBDA_NAME_PREFIX || '' }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          lambdas_root = Path("lambdas")
+          prefix = os.getenv("LAMBDA_NAME_PREFIX", "")
+          include = []
+
+          for folder in sorted(lambdas_root.iterdir()):
+              if not folder.is_dir():
+                  continue
+              if not (folder / "handler.py").exists():
+                  continue
+              include.append(
+                  {
+                      "source_dir": str(folder),
+                      "function_name": f"{prefix}{folder.name}",
+                  }
+              )
+
+          if not include:
+              raise SystemExit("No Lambda folders found under lambdas/* with handler.py")
+
+          matrix = json.dumps({"include": include})
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"lambda_matrix={matrix}\n")
+          PY
+
+  deploy:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.lambda_matrix) }}
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
-      LAMBDA_FUNCTION_NAME: ${{ secrets.LAMBDA_FUNCTION_NAME }}
       LAMBDA_EXECUTION_ROLE_ARN: ${{ secrets.LAMBDA_EXECUTION_ROLE_ARN }}
-      LAMBDA_SOURCE_DIR: ${{ vars.LAMBDA_SOURCE_DIR || 'lambdas/hello_world' }}
       LAMBDA_HANDLER: ${{ vars.LAMBDA_HANDLER || 'handler.handler' }}
       LAMBDA_RUNTIME: ${{ vars.LAMBDA_RUNTIME || 'python3.12' }}
       LAMBDA_TIMEOUT: ${{ vars.LAMBDA_TIMEOUT || '30' }}
       LAMBDA_MEMORY_SIZE: ${{ vars.LAMBDA_MEMORY_SIZE || '256' }}
+      LAMBDA_SOURCE_DIR: ${{ matrix.source_dir }}
+      LAMBDA_FUNCTION_NAME: ${{ matrix.function_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,6 +107,7 @@ jobs:
       - name: Create or Update Lambda
         run: |
           set -euo pipefail
+          echo "Deploying ${LAMBDA_FUNCTION_NAME} from ${LAMBDA_SOURCE_DIR}"
           if aws lambda get-function --function-name "$LAMBDA_FUNCTION_NAME" >/dev/null 2>&1; then
             echo "Lambda exists. Updating code..."
             aws lambda update-function-code \
