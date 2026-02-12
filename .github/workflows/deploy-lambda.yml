@@ -58,7 +58,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"lambda_matrix={matrix}\n")
           PY
-
+ 
   deploy:
     needs: discover
     runs-on: ubuntu-latest
