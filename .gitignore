@@ -29,6 +29,7 @@ Thumbs.db
 *.sqlite3
 .cache/
 *.db
+outputs/
 
 # Docker
 *.pid

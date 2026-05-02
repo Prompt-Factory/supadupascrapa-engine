@@ -1,4 +1,16 @@
 {
+  "industry": "ETC",
+  "category": "BRAND_FILM",
   "query": "브랜드필름",
-  "regionCode": "KR"
+  "regionCode": "KR",
+  "order": "date",
+  "lookbackDays": 7,
+  "maxResults": 5,
+  "pageCount": 1,
+  "includeVideoSnapshots": true,
+  "includeChannelSnapshots": true,
+  "saveToFile": true,
+  "saveSplitFiles": true,
+  "saveBundleFile": true,
+  "outputDir": "outputs/youtube_scraper"
 }
