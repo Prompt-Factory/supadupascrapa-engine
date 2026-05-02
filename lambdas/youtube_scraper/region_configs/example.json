@@ -11,7 +11,7 @@
     "labels.en": "영문 국가명",
     "labels.ko": "한글 국가명",
     "tier": "우선순위 tier. 1, 2, 3, 4 중 하나",
-    "daily_target_videos": "이 region 에서 하루에 목표로 수집할 영상 수",
+    "daily_target_videos": "이 region 에서 하루에 목표로 수집할 chart lane reserve 영상 수",
     "overall_ratio": "region 전체 mostPopular 차트에 배정할 비율",
     "category_ratio": "videoCategoryId 기반 차트에 배정할 비율",
     "preferred_video_category_ids": "카테고리 차트 수집에 우선 사용할 YouTube videoCategoryId 목록",
@@ -26,7 +26,7 @@
       "ko": "한국"
     },
     "tier": 1,
-    "daily_target_videos": 100000,
+    "daily_target_videos": 1500,
     "overall_ratio": 0.5,
     "category_ratio": 0.5,
     "preferred_video_category_ids": [

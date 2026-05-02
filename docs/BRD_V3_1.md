@@ -45,7 +45,7 @@ V3는 discovery surface를 YouTube native chart로 옮겼습니다.
 
 이 변화는 맞는 방향이었습니다. 하지만 실제 실험에서 한계도 드러났습니다.
 
-- 목표치는 `350,000 videos/day`였지만
+- chart lane 목표치는 크게 잡았지만
 - 실제 full run에서는 chart depth가 예상보다 얕았다
 - region/category별 `nextPageToken` 공급량이 빨리 소진됐다
 - 결과적으로 broad intake volume이 충분히 채워지지 않았다
@@ -160,21 +160,21 @@ V3.1에서는 discovery를 2개 layer로 나눕니다.
 
 현재 운영 대상 region:
 
-| Tier | Region | 일일 목표 영상 수 |
+| Tier | Region | Chart Reserve / Day |
 | --- | --- | ---: |
-| 1 | `KR` 한국 | 100,000 |
-| 1 | `US` 미국 | 100,000 |
-| 2 | `JP` 일본 | 50,000 |
-| 2 | `FR` 프랑스 | 50,000 |
-| 3 | `GB` 영국 | 20,000 |
-| 3 | `SG` 싱가포르 | 20,000 |
-| 4 | `ID` 인도네시아 | 10,000 |
+| 1 | `KR` 한국 | 1,500 |
+| 1 | `US` 미국 | 1,500 |
+| 2 | `JP` 일본 | 1,500 |
+| 2 | `FR` 프랑스 | 1,500 |
+| 3 | `GB` 영국 | 1,500 |
+| 3 | `SG` 싱가포르 | 1,500 |
+| 4 | `ID` 인도네시아 | 1,500 |
 
-총 목표:
+총 chart reserve:
 
-- 일일 목표 영상 수: `350,000`
+- 일일 chart reserve 영상 수: `10,500`
 
-이 값은 region chart intake의 상단 theoretical target입니다. 실제 운영은 아래의 `현재 Daily Allocation`을 따릅니다.
+region config의 `daily_target_videos`는 이제 full daily target이 아니라 chart lane reserve 값을 뜻합니다.
 
 ## Region Chart 배분
 
@@ -184,9 +184,9 @@ V3.1에서는 discovery를 2개 layer로 나눕니다.
 - `50%`: region-specific category chart
 
 예:
-- `KR 100,000/day`
-  - overall: `50,000`
-  - category charts: `50,000`
+- `KR 1,500/day`
+  - overall: `750`
+  - category charts: `750`
 
 category shortlist와 배분은 region config JSON에 기록합니다.
 
@@ -195,7 +195,7 @@ category shortlist와 배분은 region config JSON에 기록합니다.
 
 ## 현재 Daily Allocation
 
-V3.1 현재 운영안은 theoretical target과 별도로 아래처럼 고정합니다.
+V3.1 현재 운영안은 아래처럼 고정합니다.
 
 ### 1. Chart Lane Reserve
 

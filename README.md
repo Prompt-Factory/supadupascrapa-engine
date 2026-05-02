@@ -92,7 +92,7 @@ V3.1의 기본 아이디어는 아래와 같습니다.
 
 현재 `mostPopular` runner와 broad search runner가 모두 구현되어 있습니다.
 
-또한 region별 수집량 목표를 두고:
+또한 chart lane에서는 region별 fixed reserve를 두고:
 - `50%`는 region overall 차트
 - `50%`는 region별 `videoCategoryId` 차트
 
@@ -121,20 +121,20 @@ V3 region tier 설정은 국가별 JSON 파일로 분리되어 있습니다.
 
 현재 운영 대상 region:
 
-| Tier | Region | 일일 목표 영상 수 |
+| Tier | Region | Chart Reserve / Day |
 | --- | --- | ---: |
-| 1 | `KR` 한국 | 100,000 |
-| 1 | `US` 미국 | 100,000 |
-| 2 | `JP` 일본 | 50,000 |
-| 2 | `FR` 프랑스 | 50,000 |
-| 3 | `GB` 영국 | 20,000 |
-| 3 | `SG` 싱가포르 | 20,000 |
-| 4 | `ID` 인도네시아 | 10,000 |
+| 1 | `KR` 한국 | 1,500 |
+| 1 | `US` 미국 | 1,500 |
+| 2 | `JP` 일본 | 1,500 |
+| 2 | `FR` 프랑스 | 1,500 |
+| 3 | `GB` 영국 | 1,500 |
+| 3 | `SG` 싱가포르 | 1,500 |
+| 4 | `ID` 인도네시아 | 1,500 |
 
-총 목표:
+총 chart reserve:
 
-- 일일 목표 영상 수: `350,000`
-- discovery 비율: region overall `50%` + category chart `50%`
+- 일일 chart reserve 영상 수: `10,500`
+- region config의 `daily_target_videos`는 이제 full daily target이 아니라 chart lane reserve 값을 뜻합니다
 
 ## 현재 운영 배분표
 
@@ -185,35 +185,19 @@ chart reserve + search top-up 합산:
 - 일일 총사용량: `42,240 units/day`
 - 잔여 quota: `7,760 units/day`
 
-## V3 Quota 계산
+## Quota 계산
 
-V3.x의 핵심은 `videos.list`가 discovery와 video snapshot을 동시에 해결한다는 점입니다.
+V3.1의 핵심은 `videos.list`가 discovery와 video snapshot을 동시에 해결하고, broad search는 그 위에 보강 lane으로 붙는다는 점입니다.
 
 - `videos.list(chart=mostPopular, maxResults=50)`: `1 unit`
 - 같은 페이지에서 나온 채널들을 `channels.list`로 조회: `1 unit`
 - 즉 `50 videos + channel snapshot` 묶음이 대략 `2 units`
 
-계산식:
-
-```txt
-videos_per_page = 50
-units_per_page = videos.list + channels.list = 1 + 1 = 2
-
-pages_per_day = 350,000 / 50 = 7,000
-daily_units = 7,000 * 2 = 14,000
-```
-
 정리:
 
 - 일일 quota: `50,000 units/day`
-- 현재 V3 운영안 예상 사용량: `14,000 units/day`
-- 잔여 headroom: `36,000 units/day`
-
-즉 현재 tier 운영안은 quota 관점에서 매우 안전합니다.
-
-주의:
-- 위 `14,000 units/day`는 region chart 목표치를 이론적으로 그대로 채웠을 때의 계산값입니다.
-- 실제 현재 운영안은 `chart reserve 1,500/region + search top-up 120/60/20/10 pages` 기준으로 `42,240 units/day`를 사용합니다.
+- 현재 운영안 사용량: `42,240 units/day`
+- 잔여 headroom: `7,760 units/day`
 
 ## V3 Raw 저장 모델
 
@@ -310,7 +294,7 @@ outputs/youtube_scraper/
 - `handler.py`: regionCode 기준으로 overall chart + category chart를 실제 호출
 - `handler.py`: broad search seed 기반 `search.list(order=date)`도 실제 호출
 - `handler.py`: 같은 run 안에서 `video/channel snapshot` dedup도 함께 처리
-- `region_configs/*.json`: 국가별 tier, daily target, category shortlist 설정
+- `region_configs/*.json`: 국가별 tier, chart reserve, category shortlist 설정
 - `broad_search_seeds.json`: broad search seed 공통 정의
 - `broad_search_seed_config.py`: region language별 broad search seed 로더
 - `v3_region_config.py`: JSON 로더와 quota 계산값 정의
