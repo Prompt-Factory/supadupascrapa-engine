@@ -149,6 +149,9 @@ V3 초반에는 아래를 목표로 하지 않습니다.
 
 주의:
 - `videoCategoryId` 목록은 region별로 다를 수 있으므로 캐시 전제로 사용합니다
+- `assignable=true`가 항상 `mostPopular` category chart 지원을 보장하지는 않습니다
+- 일부 region/category 조합은 `videos.list(chart=mostPopular, videoCategoryId=...)`에서 `404 notFound`를 반환할 수 있습니다
+- 따라서 런타임은 scope error를 기록하고 나머지 region/category 수집을 계속할 수 있어야 합니다
 
 ### 3. `videos.list(chart=mostPopular)`
 
@@ -281,7 +284,7 @@ daily_units = 7,000 * 2 = 14,000
 
 권장 키:
 - `PK = youtube#region#chart_scope`
-- `SK = collected_at#video_category_id#page#rank#video_id`
+- `SK = collected_at#video_category_id#rank#video_id`
 
 필드:
 
@@ -291,13 +294,25 @@ daily_units = 7,000 * 2 = 14,000
 | `region` | string | region code |
 | `chart_scope` | string | `overall` 또는 `category` |
 | `video_category_id` | string nullable | category chart일 때만 값 보유 |
-| `page` | number | 차트 페이지 |
-| `rank` | number | 페이지 내 순위 |
+| `page` | number | 차트 페이지. 디버깅용 보조 필드 |
+| `rank` | number | 차트 내 절대 순위. 예: 2페이지 첫 결과는 `51`, 3페이지 첫 결과는 `101` |
 | `video_id` | string | YouTube video ID |
 | `channel_id` | string | YouTube channel ID |
 | `chart_batch_key` | string | 동일 배치 추적용 ID |
 
 V3에서 discovery row는 최소한으로 유지합니다. 상세 메타는 중복 저장하지 않고 `youtube_video_snapshots`에 둡니다.
+
+rank 계산 규칙:
+
+```txt
+rank = ((page_number - 1) * page_size) + index_within_page
+```
+
+예:
+- 1페이지 1번째 결과 = `1`
+- 1페이지 50번째 결과 = `50`
+- 2페이지 1번째 결과 = `51`
+- 3페이지 1번째 결과 = `101`
 
 ### 2. `youtube_video_snapshots`
 
@@ -395,16 +410,17 @@ video snapshot을 기반으로:
 ## 구현 상태와 다음 단계
 
 현재 상태:
-- 코드 구현은 아직 V2 search-based scraper
-- V3는 문서화와 운영안 정리 단계
+- V2 `search-first` 실행 코드는 정리했다
+- 현재 `youtube_scraper`에는 V3 `mostPopular` handler, output writer, region batch runner가 구현되어 있다
+- region config는 국가별 JSON 파일로 분리되어 있다
+- 다음 단계는 runner 고도화와 dedup / 후처리 파이프라인 연결이다
 
 다음 구현 순서 추천:
 
-1. region config 추가
-2. `videos.list(chart=mostPopular)` 기반 discovery runner 추가
-3. `channels.list` 배치 enrichment 연결
-4. `chart_hits / video_snapshots / channel_snapshots` 저장 구조 연결
-5. region별 overall/category allocation 로직 추가
+1. region/category별 chart depth와 `404` 지원 여부를 측정해 config를 정교화
+2. dedup 전략 설계 및 적용
+3. raw 적재 후 taxonomy labeling 파이프라인 연결
+4. topic aggregation 및 rising/falling detection 연결
 
 ## 참고
 

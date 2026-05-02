@@ -1,34 +1,41 @@
+import json
+import math
 import os
-from dotenv import load_dotenv
+from typing import Any
 
-from config import (
-    YOUTUBE_DISCOVERY_LOOKBACK_DAYS,
-    YOUTUBE_DISCOVERY_ORDER,
-    YOUTUBE_LOCAL_OUTPUT_DIR,
-    YOUTUBE_SEARCH_PAGE_SIZE,
-    YOUTUBE_SEARCH_PAGES_PER_QUERY,
+from utils import (
+    JsonlOutputWriter,
+    build_chart_hit_records,
+    build_channel_snapshot_records,
+    build_run_id,
+    build_video_snapshot_records,
+    is_running_in_lambda,
+    load_local_env_if_present,
+    utc_now_iso,
+)
+from v3_region_config import (
+    V3_ESTIMATED_DAILY_QUOTA_HEADROOM,
+    V3_REGION_PLANS,
+    V3_TOTAL_ESTIMATED_UNITS,
+    V3_TOTAL_TARGET_VIDEOS,
+    YOUTUBE_V3_PAGE_SIZE,
 )
 from youtube_client import (
     fetch_channel_snapshots,
-    fetch_video_snapshots,
-    search_discovery,
-)
-from utils import (
-    build_channel_snapshot_records,
-    build_search_hit_records,
-    build_video_snapshot_records,
-    is_running_in_lambda,
-    save_json_output,
-    save_jsonl_output,
+    fetch_most_popular_page,
 )
 
-# Load env from local .env file when running manually
-if __name__ == "__main__":
-    load_dotenv()
+
+def get_region_plan(region_code: str):
+    normalized_code = region_code.upper()
+    for plan in V3_REGION_PLANS:
+        if plan["code"] == normalized_code:
+            return plan
+    return None
 
 
 def get_int_event_value(
-    event: dict,
+    event: dict[str, Any],
     field_name: str,
     default_value: int,
     *,
@@ -44,198 +51,359 @@ def get_int_event_value(
     return value
 
 
+def build_overview_response() -> dict[str, Any]:
+    return {
+        "statusCode": 200,
+        "generatedAt": utc_now_iso(),
+        "version": "v3-mostPopular",
+        "regions": V3_REGION_PLANS,
+        "summary": {
+            "regionCount": len(V3_REGION_PLANS),
+            "totalTargetVideos": V3_TOTAL_TARGET_VIDEOS,
+            "totalEstimatedUnits": V3_TOTAL_ESTIMATED_UNITS,
+            "estimatedQuotaHeadroom": V3_ESTIMATED_DAILY_QUOTA_HEADROOM,
+        },
+    }
+
+
+def scrape_scope(
+    *,
+    api_key: str,
+    writer: JsonlOutputWriter | None,
+    region_code: str,
+    collected_at: str,
+    run_id: str,
+    chart_scope: str,
+    requested_video_category_id: str | None,
+    requested_video_category_label: str | None,
+    target_videos: int,
+    max_results: int,
+    max_pages_per_scope: int | None,
+    include_channel_snapshots: bool,
+) -> dict[str, Any]:
+    target_pages = math.ceil(target_videos / max_results)
+    if max_pages_per_scope is not None:
+        target_pages = min(target_pages, max_pages_per_scope)
+
+    page_number = 1
+    page_token = None
+    chart_hit_count = 0
+    video_snapshot_count = 0
+    channel_snapshot_count = 0
+    api_call_count = 0
+    fetched_pages = 0
+
+    while page_number <= target_pages:
+        status_code, response_body = fetch_most_popular_page(
+            api_key=api_key,
+            region_code=region_code,
+            max_results=max_results,
+            page_token=page_token,
+            video_category_id=requested_video_category_id,
+        )
+        api_call_count += 1
+        if status_code != 200:
+            return {
+                "statusCode": status_code,
+                "chartScope": chart_scope,
+                "videoCategoryId": requested_video_category_id,
+                "videoCategoryLabel": requested_video_category_label,
+                "targetVideos": target_videos,
+                "targetPages": target_pages,
+                "fetchedPages": fetched_pages,
+                "chartHitCount": chart_hit_count,
+                "videoSnapshotCount": video_snapshot_count,
+                "channelSnapshotCount": channel_snapshot_count,
+                "apiCallCount": api_call_count,
+                "error": response_body.get("error"),
+            }
+
+        items = response_body.get("items", [])
+        if not items:
+            break
+
+        chart_hit_records = build_chart_hit_records(
+            items=items,
+            region_code=region_code,
+            collected_at=collected_at,
+            run_id=run_id,
+            chart_scope=chart_scope,
+            requested_video_category_id=requested_video_category_id,
+            requested_video_category_label=requested_video_category_label,
+            page_number=page_number,
+            max_results=max_results,
+        )
+        video_snapshot_records = build_video_snapshot_records(
+            items=items,
+            region_code=region_code,
+            collected_at=collected_at,
+            run_id=run_id,
+            chart_scope=chart_scope,
+            requested_video_category_id=requested_video_category_id,
+            requested_video_category_label=requested_video_category_label,
+            page_number=page_number,
+            max_results=max_results,
+        )
+
+        if writer:
+            writer.write_jsonl_records("chart_hits", chart_hit_records)
+            writer.write_jsonl_records(
+                "video_snapshots",
+                video_snapshot_records,
+            )
+
+        chart_hit_count += len(chart_hit_records)
+        video_snapshot_count += len(video_snapshot_records)
+        fetched_pages += 1
+
+        if include_channel_snapshots:
+            channel_ids = [
+                item.get("snippet", {}).get("channelId")
+                for item in items
+                if item.get("snippet", {}).get("channelId")
+            ]
+            channel_status, channel_body = fetch_channel_snapshots(
+                api_key=api_key,
+                channel_ids=channel_ids,
+            )
+            api_call_count += 1
+            if channel_status != 200:
+                return {
+                    "statusCode": channel_status,
+                    "chartScope": chart_scope,
+                    "videoCategoryId": requested_video_category_id,
+                    "videoCategoryLabel": requested_video_category_label,
+                    "targetVideos": target_videos,
+                    "targetPages": target_pages,
+                    "fetchedPages": fetched_pages,
+                    "chartHitCount": chart_hit_count,
+                    "videoSnapshotCount": video_snapshot_count,
+                    "channelSnapshotCount": channel_snapshot_count,
+                    "apiCallCount": api_call_count,
+                    "error": channel_body.get("error"),
+                }
+
+            channel_records = build_channel_snapshot_records(
+                items=channel_body.get("items", []),
+                region_code=region_code,
+                collected_at=collected_at,
+                run_id=run_id,
+                chart_scope=chart_scope,
+                requested_video_category_id=requested_video_category_id,
+                requested_video_category_label=requested_video_category_label,
+                page_number=page_number,
+            )
+            if writer:
+                writer.write_jsonl_records(
+                    "channel_snapshots",
+                    channel_records,
+                )
+            channel_snapshot_count += len(channel_records)
+
+        page_token = response_body.get("nextPageToken")
+        if not page_token:
+            break
+        page_number += 1
+
+    return {
+        "statusCode": 200,
+        "chartScope": chart_scope,
+        "videoCategoryId": requested_video_category_id,
+        "videoCategoryLabel": requested_video_category_label,
+        "targetVideos": target_videos,
+        "targetPages": target_pages,
+        "fetchedPages": fetched_pages,
+        "chartHitCount": chart_hit_count,
+        "videoSnapshotCount": video_snapshot_count,
+        "channelSnapshotCount": channel_snapshot_count,
+        "apiCallCount": api_call_count,
+    }
+
+
 def handler(event, context):
     event = event or {}
+    load_local_env_if_present()
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
         raise ValueError("YOUTUBE_API_KEY is not set")
 
-    query = event.get("query", "브랜드필름")
-    region_code = event.get("regionCode", "KR")
-    industry = event.get("industry")
-    category = event.get("category")
-    order = event.get("order", YOUTUBE_DISCOVERY_ORDER)
-    lookback_days = get_int_event_value(
-        event,
-        "lookbackDays",
-        YOUTUBE_DISCOVERY_LOOKBACK_DAYS,
-        min_value=1,
-    )
+    region_code = event.get("regionCode")
+    if not region_code:
+        response = build_overview_response()
+        print(json.dumps(response, ensure_ascii=False, indent=2))
+        return response
+
+    region_plan = get_region_plan(region_code)
+    if not region_plan:
+        response = {
+            "statusCode": 404,
+            "generatedAt": utc_now_iso(),
+            "error": {"message": f"Unknown regionCode: {region_code}"},
+        }
+        print(json.dumps(response, ensure_ascii=False, indent=2))
+        return response
+
     max_results = get_int_event_value(
         event,
         "maxResults",
-        YOUTUBE_SEARCH_PAGE_SIZE,
+        YOUTUBE_V3_PAGE_SIZE,
         min_value=1,
         max_value=50,
     )
-    page_count = get_int_event_value(
-        event,
-        "pageCount",
-        YOUTUBE_SEARCH_PAGES_PER_QUERY,
-        min_value=1,
+    max_pages_per_scope_raw = event.get("maxPagesPerScope")
+    max_pages_per_scope = (
+        int(max_pages_per_scope_raw)
+        if max_pages_per_scope_raw is not None
+        else None
     )
-    published_after = event.get("publishedAfter")
-    include_video_snapshots = event.get("includeVideoSnapshots", False)
+    if max_pages_per_scope is not None and max_pages_per_scope < 1:
+        raise ValueError("maxPagesPerScope must be >= 1")
+
+    include_overall_chart = event.get("includeOverallChart", True)
+    include_category_charts = event.get("includeCategoryCharts", True)
     include_channel_snapshots = event.get(
         "includeChannelSnapshots",
-        False,
+        True,
     )
     save_to_file = event.get("saveToFile", not is_running_in_lambda())
     save_split_files = event.get("saveSplitFiles", save_to_file)
     save_bundle_file = event.get("saveBundleFile", save_to_file)
-    output_dir = event.get("outputDir", YOUTUBE_LOCAL_OUTPUT_DIR)
+    output_dir = event.get("outputDir", "outputs/youtube_scraper")
 
-    status_code, response_body = search_discovery(
-        api_key=api_key,
-        query=query,
-        region_code=region_code,
-        order=order,
-        lookback_days=lookback_days,
-        max_results=max_results,
-        page_count=page_count,
-        published_after=published_after,
+    collected_at = utc_now_iso()
+    run_id = build_run_id(region_plan["code"], collected_at)
+    writer = (
+        JsonlOutputWriter(
+            output_dir=output_dir,
+            region_code=region_plan["code"],
+            run_id=run_id,
+            collected_at=collected_at,
+        )
+        if save_to_file and save_split_files
+        else None
     )
 
-    if status_code == 200:
-        request_meta = response_body.get("request", {})
-        collected_at = request_meta.get("collectedAt")
-        effective_published_after = request_meta.get("publishedAfter")
-        search_items = response_body.get("items", [])
+    try:
+        scope_summaries: list[dict[str, Any]] = []
+        scope_errors: list[dict[str, Any]] = []
+        total_chart_hits = 0
+        total_video_snapshots = 0
+        total_channel_snapshots = 0
+        total_api_calls = 0
+        successful_scope_count = 0
 
-        if include_video_snapshots:
-            video_status, video_response = fetch_video_snapshots(
+        if include_overall_chart:
+            overall_summary = scrape_scope(
                 api_key=api_key,
-                video_ids=[
-                    item.get("videoId") for item in search_items
-                ],
-                query=query,
-                region_code=region_code,
-                industry=industry,
-                category=category,
-                order=order,
-                published_after=effective_published_after,
+                writer=writer,
+                region_code=region_plan["code"],
                 collected_at=collected_at,
+                run_id=run_id,
+                chart_scope="overall",
+                requested_video_category_id=None,
+                requested_video_category_label=None,
+                target_videos=region_plan["overall_target_videos"],
+                max_results=max_results,
+                max_pages_per_scope=max_pages_per_scope,
+                include_channel_snapshots=include_channel_snapshots,
             )
-            response_body["videoSnapshots"] = video_response.get(
-                "items",
-                [],
-            )
-            response_body["summary"]["videoSnapshotCount"] = len(
-                response_body["videoSnapshots"]
-            )
-            response_body["summary"]["videoSnapshotApiCalls"] = (
-                video_response.get("apiCalls", 0)
-            )
-            if video_status != 200:
-                response_body["videoSnapshotError"] = video_response.get(
-                    "error"
+            scope_summaries.append(overall_summary)
+            if overall_summary["statusCode"] != 200:
+                scope_errors.append(overall_summary)
+            else:
+                successful_scope_count += 1
+                total_chart_hits += overall_summary["chartHitCount"]
+                total_video_snapshots += overall_summary[
+                    "videoSnapshotCount"
+                ]
+                total_channel_snapshots += overall_summary[
+                    "channelSnapshotCount"
+                ]
+            total_api_calls += overall_summary["apiCallCount"]
+
+        if include_category_charts:
+            for allocation in region_plan["category_allocations"]:
+                category_summary = scrape_scope(
+                    api_key=api_key,
+                    writer=writer,
+                    region_code=region_plan["code"],
+                    collected_at=collected_at,
+                    run_id=run_id,
+                    chart_scope="category",
+                    requested_video_category_id=allocation["id"],
+                    requested_video_category_label=allocation["label"],
+                    target_videos=allocation["target_videos"],
+                    max_results=max_results,
+                    max_pages_per_scope=max_pages_per_scope,
+                    include_channel_snapshots=include_channel_snapshots,
                 )
+                scope_summaries.append(category_summary)
+                if category_summary["statusCode"] != 200:
+                    scope_errors.append(category_summary)
+                else:
+                    successful_scope_count += 1
+                    total_chart_hits += category_summary["chartHitCount"]
+                    total_video_snapshots += category_summary[
+                        "videoSnapshotCount"
+                    ]
+                    total_channel_snapshots += category_summary[
+                        "channelSnapshotCount"
+                    ]
+                total_api_calls += category_summary["apiCallCount"]
 
-        if include_channel_snapshots:
-            channel_status, channel_response = fetch_channel_snapshots(
-                api_key=api_key,
-                channel_ids=[
-                    item.get("channelId") for item in search_items
-                ],
-                query=query,
-                region_code=region_code,
-                industry=industry,
-                category=category,
-                order=order,
-                published_after=effective_published_after,
-                collected_at=collected_at,
-            )
-            response_body["channelSnapshots"] = channel_response.get(
-                "items",
-                [],
-            )
-            response_body["summary"]["channelSnapshotCount"] = len(
-                response_body["channelSnapshots"]
-            )
-            response_body["summary"]["channelSnapshotApiCalls"] = (
-                channel_response.get("apiCalls", 0)
-            )
-            if channel_status != 200:
-                response_body["channelSnapshotError"] = (
-                    channel_response.get("error")
+        final_status_code = 200 if successful_scope_count > 0 else 502
+        response = {
+            "statusCode": final_status_code,
+            "generatedAt": utc_now_iso(),
+            "version": "v3-mostPopular",
+            "regionPlan": region_plan,
+            "request": {
+                "regionCode": region_plan["code"],
+                "collectedAt": collected_at,
+                "runId": run_id,
+                "maxResults": max_results,
+                "maxPagesPerScope": max_pages_per_scope,
+                "includeOverallChart": include_overall_chart,
+                "includeCategoryCharts": include_category_charts,
+                "includeChannelSnapshots": include_channel_snapshots,
+                "outputDir": output_dir,
+            },
+            "scopeSummaries": scope_summaries,
+            "scopeErrors": scope_errors,
+            "summary": {
+                "scopeCount": len(scope_summaries),
+                "successfulScopeCount": successful_scope_count,
+                "failedScopeCount": len(scope_errors),
+                "chartHitCount": total_chart_hits,
+                "videoSnapshotCount": total_video_snapshots,
+                "channelSnapshotCount": total_channel_snapshots,
+                "apiCallCount": total_api_calls,
+            },
+            "savedFiles": (
+                writer.build_saved_files_payload(
+                    include_bundle=save_bundle_file
                 )
+                if writer
+                else {}
+            ),
+        }
 
-    print("🔍 YouTube API Response:", status_code)
-    print(response_body)
-
-    request_meta = response_body.get("request", {})
-    run_timestamp = request_meta.get("collectedAt")
-    saved_files = {}
-
-    if save_to_file and save_split_files:
-        search_hit_records = build_search_hit_records(
-            response_body.get("items", []),
-            industry=industry,
-            category=category,
-        )
-        saved_files["searchHitsFile"] = save_jsonl_output(
-            query=query,
-            region_code=region_code,
-            records=search_hit_records,
-            output_dir=output_dir,
-            subdir="search_hits",
-            run_timestamp=run_timestamp,
-        )
-
-        if include_video_snapshots:
-            saved_files["videoSnapshotsFile"] = save_jsonl_output(
-                query=query,
-                region_code=region_code,
-                records=build_video_snapshot_records(
-                    response_body.get("videoSnapshots", [])
-                ),
-                output_dir=output_dir,
-                subdir="video_snapshots",
-                run_timestamp=run_timestamp,
-            )
-
-        if include_channel_snapshots:
-            saved_files["channelSnapshotsFile"] = save_jsonl_output(
-                query=query,
-                region_code=region_code,
-                records=build_channel_snapshot_records(
-                    response_body.get("channelSnapshots", [])
-                ),
-                output_dir=output_dir,
-                subdir="channel_snapshots",
-                run_timestamp=run_timestamp,
-            )
-
-    if save_to_file and save_bundle_file:
-        saved_files["bundleFile"] = save_json_output(
-            query=query,
-            region_code=region_code,
-            status_code=status_code,
-            response_body=response_body,
-            output_dir=output_dir,
-            run_timestamp=run_timestamp,
-        )
-
-    if saved_files:
-        print("Saved local outputs:", saved_files)
-
-    return {
-        "statusCode": status_code,
-        "body": response_body,
-        "savedFile": saved_files.get("bundleFile"),
-        "savedFiles": saved_files,
-    }
+        if writer and save_bundle_file:
+            writer.write_bundle(response)
+        print(json.dumps(response, ensure_ascii=False, indent=2))
+        return response
+    finally:
+        if writer:
+            writer.close()
 
 
-# For local test
 if __name__ == "__main__":
-    import os
-    import json
-
-    script_dir = os.path.dirname(__file__)
-    file_path = os.path.join(script_dir, "sample_event.json")
-
-    with open(file_path) as f:
-        event = json.load(f)
-
+    sample_event_path = os.path.join(
+        os.path.dirname(__file__),
+        "sample_event.json",
+    )
+    event: dict[str, Any] = {}
+    if os.path.exists(sample_event_path):
+        with open(sample_event_path, encoding="utf-8") as sample_file:
+            event = json.load(sample_file)
     handler(event, None)

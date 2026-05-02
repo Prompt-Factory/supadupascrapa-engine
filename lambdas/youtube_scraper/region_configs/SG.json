@@ -1,0 +1,102 @@
+{
+  "code": "SG",
+  "labels": {
+    "en": "Singapore",
+    "ko": "싱가포르"
+  },
+  "tier": 3,
+  "daily_target_videos": 20000,
+  "overall_ratio": 0.5,
+  "category_ratio": 0.5,
+  "preferred_video_category_ids": [
+    "1",
+    "22",
+    "24",
+    "26",
+    "28"
+  ],
+  "category_allocations": [
+    {
+      "id": "1",
+      "label": "영화/애니메이션",
+      "weight": 0.06,
+      "reason": "브랜드필름/시네마틱 참고는 필요하지만, 싱가포르에서는 우선순위를 너무 높게 두지 않습니다."
+    },
+    {
+      "id": "22",
+      "label": "인물/블로그",
+      "weight": 0.25,
+      "reason": "인물 중심, 브이로그형, 협업형 포맷을 확보합니다."
+    },
+    {
+      "id": "24",
+      "label": "엔터테인먼트",
+      "weight": 0.33,
+      "reason": "가장 넓고, 광고/브랜디드/숏폼 레퍼런스가 많이 섞입니다."
+    },
+    {
+      "id": "26",
+      "label": "노하우/스타일",
+      "weight": 0.22,
+      "reason": "라이프스타일, 뷰티, 소비재 포맷 확보용입니다."
+    },
+    {
+      "id": "28",
+      "label": "과학기술",
+      "weight": 0.14,
+      "reason": "디지털 서비스와 제품 데모형 포맷 확보에 중요합니다."
+    }
+  ],
+  "_reference_video_categories": {
+    "_note": "참고자료용 필드입니다. 로더는 이 값을 무시합니다.",
+    "assignable_true": [
+      {"id": "1", "label": "영화/애니메이션"},
+      {"id": "2", "label": "자동차"},
+      {"id": "10", "label": "음악"},
+      {"id": "15", "label": "반려동물/동물"},
+      {"id": "17", "label": "스포츠"},
+      {"id": "19", "label": "여행/이벤트"},
+      {"id": "20", "label": "게임"},
+      {"id": "22", "label": "인물/블로그"},
+      {"id": "23", "label": "코미디"},
+      {"id": "24", "label": "엔터테인먼트"},
+      {"id": "25", "label": "뉴스/정치"},
+      {"id": "26", "label": "노하우/스타일"},
+      {"id": "27", "label": "교육"},
+      {"id": "28", "label": "과학기술"}
+    ],
+    "assignable_false": [
+      {"id": "18", "label": "단편 영화"},
+      {"id": "21", "label": "동영상 블로그"},
+      {"id": "30", "label": "영화"},
+      {"id": "31", "label": "애니메/애니메이션"},
+      {"id": "32", "label": "액션/모험"},
+      {"id": "33", "label": "고전"},
+      {"id": "34", "label": "코미디"},
+      {"id": "35", "label": "다큐멘터리"},
+      {"id": "36", "label": "드라마"},
+      {"id": "37", "label": "가족"},
+      {"id": "38", "label": "외국"},
+      {"id": "39", "label": "공포"},
+      {"id": "40", "label": "SF/판타지"},
+      {"id": "41", "label": "스릴러"},
+      {"id": "42", "label": "단편"},
+      {"id": "43", "label": "프로그램"},
+      {"id": "44", "label": "예고편"}
+    ]
+  },
+  "_chart_support_reference": {
+    "_note": "SG에서 videos.list(chart=mostPopular, videoCategoryId=...) 실제 호출 결과 기준",
+    "most_popular_supported": [
+      {"id": "1", "label": "영화/애니메이션"},
+      {"id": "22", "label": "인물/블로그"},
+      {"id": "24", "label": "엔터테인먼트"},
+      {"id": "26", "label": "노하우/스타일"},
+      {"id": "28", "label": "과학기술"}
+    ],
+    "most_popular_unsupported": [
+      {"id": "19", "label": "여행/이벤트"},
+      {"id": "27", "label": "교육"}
+    ]
+  }
+}
