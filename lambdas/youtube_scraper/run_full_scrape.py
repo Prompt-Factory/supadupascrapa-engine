@@ -89,6 +89,8 @@ def main() -> None:
             f"status={status_code} "
             f"scopeFail={summary.get('failedScopeCount', 0)} "
             f"videos={summary.get('videoSnapshotCount', 0)} "
+            f"dupVideos={summary.get('duplicateVideoSkipCount', 0)} "
+            f"dupChannels={summary.get('duplicateChannelSkipCount', 0)} "
             f"apiCalls={summary.get('apiCallCount', 0)} "
             f"elapsed={elapsed:.1f}s"
         )

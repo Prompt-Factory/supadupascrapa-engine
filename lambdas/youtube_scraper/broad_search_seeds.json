@@ -1,0 +1,404 @@
+{
+  "_purpose": "V3 broad search discovery용 공통 seed config입니다.",
+  "_notes": [
+    "모든 region은 같은 seed set을 사용하고, 언어만 region별로 바뀝니다.",
+    "이 파일은 search.list(order=date) 같은 broad discovery source를 붙일 때 사용하는 공통 seed 목록입니다.",
+    "현재 운영 region 기준 지원 언어는 ko, en, ja, fr, id 입니다.",
+    "priority_weight 합은 반드시 1.0 이어야 합니다."
+  ],
+  "region_language_map": {
+    "KR": "ko",
+    "US": "en",
+    "GB": "en",
+    "SG": "en",
+    "JP": "ja",
+    "FR": "fr",
+    "ID": "id"
+  },
+  "seed_groups": [
+    {
+      "code": "COMMERCIAL",
+      "priority_weight": 0.14,
+      "group": "brand_ad",
+      "label": {
+        "en": "Commercial",
+        "ko": "광고"
+      },
+      "reason": "가장 넓은 광고/캠페인 레이어를 확보하기 위한 기본 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "광고",
+          "alternates": ["광고 영상", "브랜디드 광고"]
+        },
+        "en": {
+          "primary": "commercial",
+          "alternates": ["advertisement", "branded commercial"]
+        },
+        "ja": {
+          "primary": "広告",
+          "alternates": ["CM", "ブランド広告"]
+        },
+        "fr": {
+          "primary": "publicité",
+          "alternates": ["film publicitaire", "publicité de marque"]
+        },
+        "id": {
+          "primary": "iklan",
+          "alternates": ["video iklan", "iklan brand"]
+        }
+      }
+    },
+    {
+      "code": "BRAND_FILM",
+      "priority_weight": 0.12,
+      "group": "brand_ad",
+      "label": {
+        "en": "Brand Film",
+        "ko": "브랜드필름"
+      },
+      "reason": "브랜드 스토리텔링, 시네마틱 연출, 브랜디드 무드 탐색용 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "브랜드필름",
+          "alternates": ["브랜드 영상", "브랜드 무비"]
+        },
+        "en": {
+          "primary": "brand film",
+          "alternates": ["brand video", "campaign film"]
+        },
+        "ja": {
+          "primary": "ブランドムービー",
+          "alternates": ["ブランド動画", "キャンペーンムービー"]
+        },
+        "fr": {
+          "primary": "film de marque",
+          "alternates": ["vidéo de marque", "film de campagne"]
+        },
+        "id": {
+          "primary": "brand film",
+          "alternates": ["video branding", "video brand"]
+        }
+      }
+    },
+    {
+      "code": "PRODUCT_AD",
+      "priority_weight": 0.1,
+      "group": "brand_ad",
+      "label": {
+        "en": "Product Advertisement",
+        "ko": "제품 광고"
+      },
+      "reason": "제품 중심의 commercial, demo, feature highlight 영상을 넓게 잡기 위한 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "제품광고",
+          "alternates": ["제품 영상", "제품 프로모션"]
+        },
+        "en": {
+          "primary": "product commercial",
+          "alternates": ["product video", "product promo"]
+        },
+        "ja": {
+          "primary": "商品広告",
+          "alternates": ["商品動画", "商品プロモーション"]
+        },
+        "fr": {
+          "primary": "publicité produit",
+          "alternates": ["vidéo produit", "promotion produit"]
+        },
+        "id": {
+          "primary": "iklan produk",
+          "alternates": ["video produk", "promosi produk"]
+        }
+      }
+    },
+    {
+      "code": "APP_SERVICE_PROMO",
+      "priority_weight": 0.08,
+      "group": "product_demo",
+      "label": {
+        "en": "App/Service Promotion",
+        "ko": "앱/서비스 홍보"
+      },
+      "reason": "앱, SaaS, 플랫폼, 서비스 소개형 영상을 위한 broad seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "앱 홍보",
+          "alternates": ["서비스 홍보", "앱 소개"]
+        },
+        "en": {
+          "primary": "app promo",
+          "alternates": ["service promo", "app introduction"]
+        },
+        "ja": {
+          "primary": "アプリ紹介",
+          "alternates": ["サービス紹介", "アプリプロモーション"]
+        },
+        "fr": {
+          "primary": "promotion application",
+          "alternates": ["promotion service", "présentation application"]
+        },
+        "id": {
+          "primary": "promosi aplikasi",
+          "alternates": ["promosi layanan", "pengenalan aplikasi"]
+        }
+      }
+    },
+    {
+      "code": "TUTORIAL_EXPLAINER",
+      "priority_weight": 0.08,
+      "group": "education_format",
+      "label": {
+        "en": "Tutorial/Explainer",
+        "ko": "튜토리얼/설명형"
+      },
+      "reason": "사용법, 기능 설명, explainer 포맷의 시각 언어를 확보하기 위한 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "튜토리얼",
+          "alternates": ["사용법", "설명 영상"]
+        },
+        "en": {
+          "primary": "tutorial",
+          "alternates": ["how to", "explainer video"]
+        },
+        "ja": {
+          "primary": "チュートリアル",
+          "alternates": ["使い方", "解説動画"]
+        },
+        "fr": {
+          "primary": "tutoriel",
+          "alternates": ["mode d'emploi", "vidéo explicative"]
+        },
+        "id": {
+          "primary": "tutorial",
+          "alternates": ["cara pakai", "video penjelasan"]
+        }
+      }
+    },
+    {
+      "code": "INTERVIEW",
+      "priority_weight": 0.08,
+      "group": "talk_format",
+      "label": {
+        "en": "Interview",
+        "ko": "인터뷰"
+      },
+      "reason": "인터뷰, 대담, creator/brand collaboration 포맷을 확보하기 위한 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "인터뷰",
+          "alternates": ["브랜드 인터뷰"]
+        },
+        "en": {
+          "primary": "interview",
+          "alternates": ["brand interview"]
+        },
+        "ja": {
+          "primary": "インタビュー",
+          "alternates": [ "ブランドインタビュー"]
+        },
+        "fr": {
+          "primary": "interview",
+          "alternates": ["interview de marque"]
+        },
+        "id": {
+          "primary": "wawancara",
+          "alternates": ["interview", "wawancara brand"]
+        }
+      }
+    },
+    {
+      "code": "MOTION_GRAPHICS",
+      "priority_weight": 0.1,
+      "group": "visual_style",
+      "label": {
+        "en": "Motion Graphics",
+        "ko": "모션그래픽"
+      },
+      "reason": "그래픽 기반 영상, kinetic type, motion design 문법을 확보하기 위한 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "모션그래픽",
+          "alternates": ["그래픽 영상", "모션디자인"]
+        },
+        "en": {
+          "primary": "motion graphics",
+          "alternates": ["motion design", "graphic video"]
+        },
+        "ja": {
+          "primary": "モーショングラフィックス",
+          "alternates": ["モーションデザイン", "グラフィック動画"]
+        },
+        "fr": {
+          "primary": "motion design",
+          "alternates": ["animation graphique", "vidéo graphique"]
+        },
+        "id": {
+          "primary": "motion graphics",
+          "alternates": ["motion design", "video grafis"]
+        }
+      }
+    },
+    {
+      "code": "INFOGRAPHIC",
+      "priority_weight": 0.07,
+      "group": "visual_style",
+      "label": {
+        "en": "Infographic",
+        "ko": "인포그래픽"
+      },
+      "reason": "정보 전달형 그래픽 포맷과 data visualization 스타일 확보용 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "인포그래픽",
+          "alternates": ["정보 그래픽", "설명 그래픽"]
+        },
+        "en": {
+          "primary": "infographic",
+          "alternates": ["explainer graphic", "information graphic"]
+        },
+        "ja": {
+          "primary": "インフォグラフィック",
+          "alternates": ["情報グラフィック", "説明グラフィック"]
+        },
+        "fr": {
+          "primary": "infographie",
+          "alternates": ["vidéo infographique", "graphique explicatif"]
+        },
+        "id": {
+          "primary": "infografis",
+          "alternates": ["video infografis", "grafis informasi"]
+        }
+      }
+    },
+    {
+      "code": "THREE_D_GRAPHICS",
+      "priority_weight": 0.07,
+      "group": "visual_style",
+      "label": {
+        "en": "3D Graphics",
+        "ko": "3D 그래픽"
+      },
+      "reason": "3D animation, 3D product visualization, CG-heavy 포맷 확보용 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "3D 그래픽",
+          "alternates": ["3D 애니메이션", "3D 영상"]
+        },
+        "en": {
+          "primary": "3D graphics",
+          "alternates": ["3D animation", "3D video"]
+        },
+        "ja": {
+          "primary": "3Dグラフィック",
+          "alternates": ["3Dアニメーション", "3D動画"]
+        },
+        "fr": {
+          "primary": "graphisme 3D",
+          "alternates": ["animation 3D", "vidéo 3D"]
+        },
+        "id": {
+          "primary": "grafis 3D",
+          "alternates": ["animasi 3D", "video 3D"]
+        }
+      }
+    },
+    {
+      "code": "MEDIA_ART",
+      "priority_weight": 0.05,
+      "group": "visual_style",
+      "label": {
+        "en": "Media Art",
+        "ko": "미디어아트"
+      },
+      "reason": "installation, immersive visual, experimental digital art 레퍼런스 확보용 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "미디어아트",
+          "alternates": ["미디어 아트", "디지털 아트 설치"]
+        },
+        "en": {
+          "primary": "media art",
+          "alternates": ["digital installation", "immersive art"]
+        },
+        "ja": {
+          "primary": "メディアアート",
+          "alternates": ["デジタルアート", "インスタレーションアート"]
+        },
+        "fr": {
+          "primary": "art numérique",
+          "alternates": ["media art", "installation numérique"]
+        },
+        "id": {
+          "primary": "seni media",
+          "alternates": ["media art", "instalasi digital"]
+        }
+      }
+    },
+    {
+      "code": "YOUTUBE_PRODUCTION",
+      "priority_weight": 0.06,
+      "group": "production_context",
+      "label": {
+        "en": "YouTube Production",
+        "ko": "유튜브 제작"
+      },
+      "reason": "platform-native content production과 creator format 레퍼런스를 확보하기 위한 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "유튜브 제작",
+          "alternates": ["유튜브 영상 제작", "유튜브 콘텐츠 제작"]
+        },
+        "en": {
+          "primary": "youtube production",
+          "alternates": ["youtube video production", "youtube content production"]
+        },
+        "ja": {
+          "primary": "YouTube制作",
+          "alternates": ["YouTube動画制作", "YouTubeコンテンツ制作"]
+        },
+        "fr": {
+          "primary": "production YouTube",
+          "alternates": ["production vidéo YouTube", "contenu YouTube"]
+        },
+        "id": {
+          "primary": "produksi YouTube",
+          "alternates": ["produksi video YouTube", "konten YouTube"]
+        }
+      }
+    },
+    {
+      "code": "MAKING_FILM",
+      "priority_weight": 0.05,
+      "group": "production_context",
+      "label": {
+        "en": "Making Film / Behind the Scenes",
+        "ko": "메이킹필름"
+      },
+      "reason": "촬영 현장, 제작 과정, behind-the-scenes 포맷을 확보하기 위한 seed입니다.",
+      "queries": {
+        "ko": {
+          "primary": "메이킹필름",
+          "alternates": ["메이킹 영상", "촬영 현장"]
+        },
+        "en": {
+          "primary": "making film",
+          "alternates": ["behind the scenes", "production process"]
+        },
+        "ja": {
+          "primary": "メイキング",
+          "alternates": ["制作の裏側", "撮影現場"]
+        },
+        "fr": {
+          "primary": "making of",
+          "alternates": ["coulisses", "processus de production"]
+        },
+        "id": {
+          "primary": "behind the scenes",
+          "alternates": ["proses produksi", "video making"]
+        }
+      }
+    }
+  ]
+}

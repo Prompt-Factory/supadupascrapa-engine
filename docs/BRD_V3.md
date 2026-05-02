@@ -1,5 +1,7 @@
 # SupaDupaScrapa BRD V3
 
+> 이 문서는 V3 단계 기록용 문서입니다. 현재 최신 방향은 [BRD_V3_1.md](/Users/allon.km/PromptFactory/supadupascrapa-engine/docs/BRD_V3_1.md:1) 입니다.
+
 ## 문서 목적
 
 이 문서는 SupaDupaScrapa의 세 번째 수집 전략을 정의합니다.
