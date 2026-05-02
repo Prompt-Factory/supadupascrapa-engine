@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 from uuid import uuid4
@@ -35,6 +35,11 @@ def utc_now() -> datetime:
 
 def utc_now_iso() -> str:
     return utc_now().isoformat().replace("+00:00", "Z")
+
+
+def utc_days_ago_iso(days: int) -> str:
+    target = utc_now() - timedelta(days=days)
+    return target.isoformat().replace("+00:00", "Z")
 
 
 def is_running_in_lambda() -> bool:
@@ -88,6 +93,13 @@ class JsonlOutputWriter:
                 output_dir=output_dir,
                 region_code=region_code,
                 subdir="chart_hits",
+                date_partition=date_partition,
+                filename=f"{run_id}.jsonl",
+            ),
+            "search_hits": build_partitioned_output_path(
+                output_dir=output_dir,
+                region_code=region_code,
+                subdir="search_hits",
                 date_partition=date_partition,
                 filename=f"{run_id}.jsonl",
             ),
@@ -158,6 +170,7 @@ class JsonlOutputWriter:
     ) -> dict[str, str]:
         saved_files = {
             "chartHitsFile": str(self.paths["chart_hits"]),
+            "searchHitsFile": str(self.paths["search_hits"]),
             "videoSnapshotsFile": str(self.paths["video_snapshots"]),
             "channelSnapshotsFile": str(self.paths["channel_snapshots"]),
         }
@@ -201,6 +214,49 @@ def build_chart_hit_records(
     return records
 
 
+def build_search_hit_records(
+    *,
+    items: list[dict[str, Any]],
+    region_code: str,
+    collected_at: str,
+    run_id: str,
+    search_seed_code: str,
+    search_seed_group: str,
+    search_seed_label: str,
+    query_language: str,
+    source_query: str,
+    search_order: str,
+    published_after: str | None,
+    page_number: int,
+    max_results: int,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for index, item in enumerate(items, start=1):
+        snippet = item.get("snippet", {})
+        item_id = item.get("id", {})
+        rank = ((page_number - 1) * max_results) + index
+        records.append(
+            {
+                "collected_at": collected_at,
+                "region": region_code,
+                "search_seed_code": search_seed_code,
+                "search_seed_group": search_seed_group,
+                "search_seed_label": search_seed_label,
+                "query_language": query_language,
+                "source_query": source_query,
+                "search_order": search_order,
+                "published_after": published_after,
+                "page": page_number,
+                "rank": rank,
+                "video_id": item_id.get("videoId"),
+                "channel_id": snippet.get("channelId"),
+                "search_batch_key": run_id,
+                "source": "youtube.search.list",
+            }
+        )
+    return records
+
+
 def build_video_snapshot_records(
     *,
     items: list[dict[str, Any]],
@@ -212,6 +268,7 @@ def build_video_snapshot_records(
     requested_video_category_label: str | None,
     page_number: int,
     max_results: int,
+    source: str = "youtube.videos.list.mostPopular",
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for index, item in enumerate(items, start=1):
@@ -247,7 +304,7 @@ def build_video_snapshot_records(
                 "like_count": statistics.get("likeCount"),
                 "comment_count": statistics.get("commentCount"),
                 "chart_batch_key": run_id,
-                "source": "youtube.videos.list.mostPopular",
+                "source": source,
             }
         )
     return records
@@ -263,6 +320,7 @@ def build_channel_snapshot_records(
     requested_video_category_id: str | None,
     requested_video_category_label: str | None,
     page_number: int,
+    source: str = "youtube.channels.list",
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for item in items:
@@ -287,7 +345,7 @@ def build_channel_snapshot_records(
                 ),
                 "video_count": statistics.get("videoCount"),
                 "chart_batch_key": run_id,
-                "source": "youtube.channels.list",
+                "source": source,
             }
         )
     return records

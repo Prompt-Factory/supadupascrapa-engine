@@ -10,8 +10,8 @@ AWS Lambda 기반의 YouTube 수집 실험 레포지토리입니다.
 
 중요:
 - V2의 `search-first` 실행 코드는 정리했습니다.
-- 현재 `youtube_scraper`는 V3 `mostPopular` 수집 runner가 구현되어 있습니다.
-- broad search seed config는 추가되어 있고, broad search runtime은 다음 구현 단계입니다.
+- 현재 `youtube_scraper`는 V3.1 `mostPopular + broad search` 수집 runner가 구현되어 있습니다.
+- broad search seed config와 broad search runtime이 모두 연결되어 있습니다.
 
 ## 구조
 
@@ -90,7 +90,7 @@ V3.1의 기본 아이디어는 아래와 같습니다.
 - region별로 바뀌는 것은 query language 뿐입니다
 - broad search는 taxonomy 직접 매칭용이 아니라, 제작 트렌드 raw intake 보강용입니다
 
-현재 `mostPopular` runner는 구현되어 있고, broad search는 seed config까지 준비된 상태입니다.
+현재 `mostPopular` runner와 broad search runner가 모두 구현되어 있습니다.
 
 또한 region별 수집량 목표를 두고:
 - `50%`는 region overall 차트
@@ -299,15 +299,16 @@ outputs/youtube_scraper/
 ```
 
 - `chart_hits/`는 discovery 최소 로그입니다
-- `search_hits/`는 broad search runner가 붙으면 추가될 discovery 로그입니다
+- `search_hits/`는 broad search runner의 discovery 로그입니다
 - `video_snapshots/`, `channel_snapshots/`는 DB 적재용 primary raw 저장본입니다
 - region별로 먼저 분리한 뒤, 각 stream 아래 UTC 기준 `date=YYYY-MM-DD` partition을 둡니다
 
 ## 현재 구현 상태
 
-현재 `youtube_scraper`는 V3 `mostPopular` 수집기가 붙어 있습니다.
+현재 `youtube_scraper`는 V3.1 `mostPopular + broad search` 수집기가 붙어 있습니다.
 
 - `handler.py`: regionCode 기준으로 overall chart + category chart를 실제 호출
+- `handler.py`: broad search seed 기반 `search.list(order=date)`도 실제 호출
 - `handler.py`: 같은 run 안에서 `video/channel snapshot` dedup도 함께 처리
 - `region_configs/*.json`: 국가별 tier, daily target, category shortlist 설정
 - `broad_search_seeds.json`: broad search seed 공통 정의
@@ -334,6 +335,19 @@ python3 lambdas/youtube_scraper/handler.py
 python3 lambdas/youtube_scraper/run_full_scrape.py
 ```
 
+자주 쓰는 배치 명령:
+
+```bash
+# chart + search full run
+python3 lambdas/youtube_scraper/run_full_scrape.py --log-every-pages 10
+
+# chart lane만
+python3 lambdas/youtube_scraper/run_full_scrape.py --chart-only --log-every-pages 10
+
+# search lane만
+python3 lambdas/youtube_scraper/run_full_scrape.py --search-only --log-every-pages 10
+```
+
 예시 `sample_event.json`:
 
 ```json
@@ -343,7 +357,9 @@ python3 lambdas/youtube_scraper/run_full_scrape.py
   "maxPagesPerScope": 1,
   "includeOverallChart": true,
   "includeCategoryCharts": true,
+  "includeSearchLane": false,
   "includeChannelSnapshots": true,
+  "searchLookbackDays": 7,
   "logProgress": true,
   "logEveryPages": 1,
   "printResponse": false,
@@ -361,14 +377,16 @@ python3 lambdas/youtube_scraper/run_full_scrape.py
 - `maxPagesPerScope`: 테스트용 page limit
 - `includeOverallChart`: overall chart 수집 여부
 - `includeCategoryCharts`: category chart 수집 여부
+- `includeSearchLane`: broad search lane 수집 여부
 - `includeChannelSnapshots`: channel snapshot 저장 여부
+- `searchLookbackDays`: broad search `publishedAfter` lookback days
 - `logProgress`: 터미널 progress 로그 출력 여부
 - `logEveryPages`: page progress를 몇 page마다 찍을지
 - `printResponse`: 최종 response JSON 전체 출력 여부
 
 실행 결과:
 
-- `chart_hits`, `video_snapshots`, `channel_snapshots`는 JSONL로 저장됩니다
+- `chart_hits`, `search_hits`, `video_snapshots`, `channel_snapshots`는 JSONL로 저장됩니다
 - `runs`에는 summary bundle JSON이 저장됩니다
 - 일부 category chart가 `404 notFound`여도 `scopeErrors`에 기록하고 나머지 scope는 계속 진행합니다
 - 로컬 실행 시 터미널에는 `region -> scope -> page checkpoint -> summary` 순서로 progress가 출력됩니다

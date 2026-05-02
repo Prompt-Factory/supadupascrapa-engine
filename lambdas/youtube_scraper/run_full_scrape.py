@@ -24,6 +24,22 @@ def parse_args() -> argparse.Namespace:
         help="Print page-level progress every N pages.",
     )
     parser.add_argument(
+        "--chart-only",
+        action="store_true",
+        help="Run only the mostPopular chart lane.",
+    )
+    parser.add_argument(
+        "--search-only",
+        action="store_true",
+        help="Run only the broad search lane.",
+    )
+    parser.add_argument(
+        "--search-lookback-days",
+        type=int,
+        default=7,
+        help="Broad search publishedAfter lookback window in days.",
+    )
+    parser.add_argument(
         "--skip-save",
         action="store_true",
         help="Do not write output files.",
@@ -33,6 +49,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.chart_only and args.search_only:
+        raise SystemExit("Choose only one of --chart-only or --search-only")
+
     targets = V3_REGION_PLANS
     if args.region_code:
         targets = [
@@ -61,10 +80,16 @@ def main() -> None:
             f"category={plan['category_target_videos']} "
             f"allocations={len(plan['category_allocations'])}"
         )
+        include_chart_lane = not args.search_only
+        include_search_lane = not args.chart_only
         event = {
             "regionCode": plan["code"],
             "logProgress": True,
             "printResponse": False,
+            "includeOverallChart": include_chart_lane,
+            "includeCategoryCharts": include_chart_lane,
+            "includeSearchLane": include_search_lane,
+            "searchLookbackDays": args.search_lookback_days,
             "saveToFile": not args.skip_save,
             "saveSplitFiles": not args.skip_save,
             "saveBundleFile": not args.skip_save,
@@ -88,6 +113,8 @@ def main() -> None:
             f"lastRegion={plan['code']} "
             f"status={status_code} "
             f"scopeFail={summary.get('failedScopeCount', 0)} "
+            f"chartHits={summary.get('chartHitCount', 0)} "
+            f"searchHits={summary.get('searchHitCount', 0)} "
             f"videos={summary.get('videoSnapshotCount', 0)} "
             f"dupVideos={summary.get('duplicateVideoSkipCount', 0)} "
             f"dupChannels={summary.get('duplicateChannelSkipCount', 0)} "

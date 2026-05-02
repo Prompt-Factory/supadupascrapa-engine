@@ -6,6 +6,12 @@ from typing import Final, TypedDict
 BROAD_SEARCH_SEED_CONFIG_PATH: Final[Path] = (
     Path(__file__).resolve().parent / "broad_search_seeds.json"
 )
+DEFAULT_SEARCH_TOP_UP_PAGES_BY_TIER: Final[dict[int, int]] = {
+    1: 120,
+    2: 60,
+    3: 20,
+    4: 10,
+}
 
 
 class BroadSearchSeedLabel(TypedDict):
@@ -44,11 +50,14 @@ class BroadSearchSeedPlan(TypedDict):
     language: str
     primary_query: str
     alternate_queries: list[str]
+    target_pages: int
 
 
 class BroadSearchRegionPlan(TypedDict):
     region_code: str
+    tier: int
     language: str
+    total_target_pages: int
     seeds: list[BroadSearchSeedPlan]
 
 
@@ -97,6 +106,7 @@ def load_broad_search_root_config() -> BroadSearchRootConfig:
 def build_broad_search_region_plan(
     *,
     region_code: str,
+    tier: int,
     root_config: BroadSearchRootConfig,
 ) -> BroadSearchRegionPlan:
     normalized_region_code = region_code.upper()
@@ -107,9 +117,16 @@ def build_broad_search_region_plan(
             f"{normalized_region_code}"
         )
 
+    total_target_pages = DEFAULT_SEARCH_TOP_UP_PAGES_BY_TIER[tier]
     seeds: list[BroadSearchSeedPlan] = []
-    for item in root_config["seed_groups"]:
+    allocated_pages_so_far = 0
+    for index, item in enumerate(root_config["seed_groups"]):
         locale_queries = item["queries"][language]
+        if index == len(root_config["seed_groups"]) - 1:
+            target_pages = total_target_pages - allocated_pages_so_far
+        else:
+            target_pages = int(total_target_pages * item["priority_weight"])
+            allocated_pages_so_far += target_pages
         seeds.append(
             {
                 "code": item["code"],
@@ -120,12 +137,15 @@ def build_broad_search_region_plan(
                 "language": language,
                 "primary_query": locale_queries["primary"],
                 "alternate_queries": locale_queries["alternates"],
+                "target_pages": target_pages,
             }
         )
 
     return {
         "region_code": normalized_region_code,
+        "tier": tier,
         "language": language,
+        "total_target_pages": total_target_pages,
         "seeds": seeds,
     }
 
@@ -133,10 +153,26 @@ def build_broad_search_region_plan(
 BROAD_SEARCH_ROOT_CONFIG: Final[BroadSearchRootConfig] = (
     load_broad_search_root_config()
 )
-BROAD_SEARCH_REGION_PLANS: Final[dict[str, BroadSearchRegionPlan]] = {
-    region_code: build_broad_search_region_plan(
-        region_code=region_code,
-        root_config=BROAD_SEARCH_ROOT_CONFIG,
-    )
-    for region_code in BROAD_SEARCH_ROOT_CONFIG["region_language_map"]
-}
+def build_broad_search_region_plans() -> dict[str, BroadSearchRegionPlan]:
+    from v3_region_config import V3_REGION_PLANS
+
+    region_tiers = {
+        plan["code"]: plan["tier"]
+        for plan in V3_REGION_PLANS
+    }
+    plans: dict[str, BroadSearchRegionPlan] = {}
+    for region_code in BROAD_SEARCH_ROOT_CONFIG["region_language_map"]:
+        tier = region_tiers.get(region_code)
+        if tier is None:
+            continue
+        plans[region_code] = build_broad_search_region_plan(
+            region_code=region_code,
+            tier=tier,
+            root_config=BROAD_SEARCH_ROOT_CONFIG,
+        )
+    return plans
+
+
+BROAD_SEARCH_REGION_PLANS: Final[dict[str, BroadSearchRegionPlan]] = (
+    build_broad_search_region_plans()
+)

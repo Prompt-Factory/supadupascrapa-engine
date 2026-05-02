@@ -70,3 +70,49 @@ def fetch_channel_snapshots(
             "key": api_key,
         },
     )
+
+
+def fetch_video_snapshots(
+    *,
+    api_key: str,
+    video_ids: list[str],
+) -> tuple[int, dict[str, Any]]:
+    unique_video_ids = list(dict.fromkeys(video_ids))
+    if not unique_video_ids:
+        return 200, {"items": []}
+    return request_json(
+        "videos",
+        {
+            "part": "snippet,statistics,contentDetails,status",
+            "id": ",".join(unique_video_ids),
+            "key": api_key,
+        },
+    )
+
+
+def fetch_search_page(
+    *,
+    api_key: str,
+    query: str,
+    region_code: str,
+    max_results: int,
+    order: str,
+    page_token: str | None = None,
+    published_after: str | None = None,
+    relevance_language: str | None = None,
+) -> tuple[int, dict[str, Any]]:
+    return request_json(
+        "search",
+        {
+            "part": "snippet",
+            "type": "video",
+            "q": query,
+            "regionCode": region_code,
+            "order": order,
+            "maxResults": max_results,
+            "pageToken": page_token,
+            "publishedAfter": published_after,
+            "relevanceLanguage": relevance_language,
+            "key": api_key,
+        },
+    )

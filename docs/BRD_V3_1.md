@@ -326,7 +326,8 @@ V3.1에서도 raw stream 기본 구조는 유지합니다.
 현재 구현 메모:
 - 같은 run 안에서 이미 본 `video_id`는 `video_snapshot`을 다시 저장하지 않습니다
 - 같은 run 안에서 이미 본 `channel_id`는 `channel_snapshot`을 다시 저장하지 않습니다
-- 현재 dedup은 `run 내부 snapshot dedup`까지 구현되어 있고, broad search가 붙은 뒤에는 `chart + search cross-source dedup`으로 확장할 예정입니다
+- 현재 dedup은 `chart + search`를 함께 도는 run 내부 snapshot dedup까지 구현되어 있습니다
+- 터미널 progress 로그와 run summary에는 `dupVideos`, `dupChannels`가 함께 출력됩니다
 
 ### 향후 추가 stream
 
@@ -391,8 +392,8 @@ video snapshot 기반으로:
 - V3 `mostPopular` region runner는 구현되어 있다
 - region config는 국가별 JSON 파일로 분리되어 있다
 - broad search seed 공통 config와 로더를 추가했다
-- current chart runner에는 run 내부 `video/channel snapshot dedup`이 들어가 있다
-- broad search runtime은 아직 연결 전이다
+- `search.list(order=date)` broad search runner도 구현되어 있다
+- current runner에는 chart + search를 가로지르는 run 내부 `video/channel snapshot dedup`이 들어가 있다
 
 운영 메모:
 - chart lane은 region별 fixed reserve로 운용한다
@@ -401,11 +402,11 @@ video snapshot 기반으로:
 
 다음 구현 순서 추천:
 
-1. `search.list(order=date)` broad search runner 추가
-2. broad search 결과의 `videos.list` / `channels.list` enrichment 연결
-3. chart + search 결과 cross-source dedup 전략 확장
-4. raw 적재 후 taxonomy labeling 파이프라인 연결
-5. topic aggregation 및 rising/falling detection 연결
+1. search seed별 alternate query fallback 전략 추가
+2. persisted daily dedup / resume 전략 추가
+3. raw 적재 후 taxonomy labeling 파이프라인 연결
+4. topic aggregation 및 rising/falling detection 연결
+5. search lane 운영 비율을 region별 실측 데이터 기준으로 재조정
 
 ## 참고
 

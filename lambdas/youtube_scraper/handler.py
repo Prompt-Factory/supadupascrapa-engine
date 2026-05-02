@@ -4,14 +4,20 @@ import os
 import time
 from typing import Any
 
+from broad_search_seed_config import (
+    BROAD_SEARCH_REGION_PLANS,
+    DEFAULT_SEARCH_TOP_UP_PAGES_BY_TIER,
+)
 from utils import (
     JsonlOutputWriter,
     build_chart_hit_records,
     build_channel_snapshot_records,
+    build_search_hit_records,
     build_run_id,
     build_video_snapshot_records,
     is_running_in_lambda,
     load_local_env_if_present,
+    utc_days_ago_iso,
     utc_now_iso,
 )
 from v3_region_config import (
@@ -24,6 +30,8 @@ from v3_region_config import (
 from youtube_client import (
     fetch_channel_snapshots,
     fetch_most_popular_page,
+    fetch_search_page,
+    fetch_video_snapshots,
 )
 
 
@@ -33,6 +41,10 @@ def get_region_plan(region_code: str):
         if plan["code"] == normalized_code:
             return plan
     return None
+
+
+def get_broad_search_region_plan(region_code: str):
+    return BROAD_SEARCH_REGION_PLANS.get(region_code.upper())
 
 
 def get_int_event_value(
@@ -82,6 +94,18 @@ def build_scope_name(
     if requested_video_category_id:
         return f"category {requested_video_category_id}"
     return chart_scope
+
+
+def build_search_scope_name(
+    search_seed_code: str,
+    search_seed_label: str,
+    source_query: str,
+) -> str:
+    return (
+        f"search {search_seed_code} "
+        f"{search_seed_label} "
+        f"query={source_query}"
+    )
 
 
 def extract_error_summary(response_body: dict[str, Any]) -> str:
@@ -158,6 +182,29 @@ def filter_new_channel_ids(
         seen_channel_ids.add(channel_id)
         new_channel_ids.append(channel_id)
     return new_channel_ids, duplicate_count
+
+
+def filter_new_search_video_ids(
+    items: list[dict[str, Any]],
+    seen_video_ids: set[str],
+) -> tuple[list[str], int]:
+    candidate_video_ids: list[str] = []
+    duplicate_count = 0
+    seen_in_page: set[str] = set()
+    for item in items:
+        item_id = item.get("id", {})
+        video_id = item_id.get("videoId")
+        if not video_id:
+            continue
+        if video_id in seen_in_page:
+            duplicate_count += 1
+            continue
+        seen_in_page.add(video_id)
+        if video_id in seen_video_ids:
+            duplicate_count += 1
+            continue
+        candidate_video_ids.append(video_id)
+    return candidate_video_ids, duplicate_count
 
 
 def scrape_scope(
@@ -425,6 +472,327 @@ def scrape_scope(
     }
 
 
+def scrape_search_scope(
+    *,
+    api_key: str,
+    writer: JsonlOutputWriter | None,
+    region_code: str,
+    collected_at: str,
+    run_id: str,
+    query_language: str,
+    source_query: str,
+    search_seed_code: str,
+    search_seed_group: str,
+    search_seed_label: str,
+    target_pages: int,
+    max_results: int,
+    published_after: str | None,
+    include_channel_snapshots: bool,
+    scope_index: int,
+    total_scope_count: int,
+    log_progress: bool,
+    log_every_pages: int | None,
+    seen_video_ids: set[str],
+    seen_channel_ids: set[str],
+) -> dict[str, Any]:
+    scope_started_at = time.time()
+    scope_name = build_search_scope_name(
+        search_seed_code,
+        search_seed_label,
+        source_query,
+    )
+    effective_log_every_pages = get_log_every_pages(
+        target_pages,
+        log_every_pages,
+    )
+
+    if log_progress:
+        print(
+            f"  [scope {scope_index}/{total_scope_count}] start "
+            f"{scope_name} "
+            f"targetPages={target_pages}"
+        )
+
+    page_number = 1
+    page_token = None
+    search_hit_count = 0
+    video_snapshot_count = 0
+    channel_snapshot_count = 0
+    duplicate_video_skip_count = 0
+    duplicate_channel_skip_count = 0
+    api_call_count = 0
+    fetched_pages = 0
+
+    while page_number <= target_pages:
+        status_code, response_body = fetch_search_page(
+            api_key=api_key,
+            query=source_query,
+            region_code=region_code,
+            max_results=max_results,
+            order="date",
+            page_token=page_token,
+            published_after=published_after,
+            relevance_language=query_language,
+        )
+        api_call_count += 1
+        if status_code != 200:
+            error_summary = extract_error_summary(response_body)
+            if log_progress:
+                print(
+                    f"  [scope {scope_index}/{total_scope_count}] fail "
+                    f"{scope_name} "
+                    f"status={status_code} "
+                    f"pages={fetched_pages}/{target_pages} "
+                    f"apiCalls={api_call_count} "
+                    f"error={error_summary}"
+                )
+            return {
+                "statusCode": status_code,
+                "chartScope": "search",
+                "searchSeedCode": search_seed_code,
+                "searchSeedGroup": search_seed_group,
+                "searchSeedLabel": search_seed_label,
+                "sourceQuery": source_query,
+                "targetPages": target_pages,
+                "fetchedPages": fetched_pages,
+                "searchHitCount": search_hit_count,
+                "videoSnapshotCount": video_snapshot_count,
+                "channelSnapshotCount": channel_snapshot_count,
+                "duplicateVideoSkipCount": duplicate_video_skip_count,
+                "duplicateChannelSkipCount": duplicate_channel_skip_count,
+                "apiCallCount": api_call_count,
+                "error": response_body.get("error"),
+            }
+
+        items = response_body.get("items", [])
+        if not items:
+            break
+
+        search_hit_records = build_search_hit_records(
+            items=items,
+            region_code=region_code,
+            collected_at=collected_at,
+            run_id=run_id,
+            search_seed_code=search_seed_code,
+            search_seed_group=search_seed_group,
+            search_seed_label=search_seed_label,
+            query_language=query_language,
+            source_query=source_query,
+            search_order="date",
+            published_after=published_after,
+            page_number=page_number,
+            max_results=max_results,
+        )
+        if writer:
+            writer.write_jsonl_records("search_hits", search_hit_records)
+        search_hit_count += len(search_hit_records)
+        fetched_pages += 1
+
+        (
+            candidate_video_ids,
+            duplicate_video_count_from_hits,
+        ) = filter_new_search_video_ids(items, seen_video_ids)
+        duplicate_video_skip_count += duplicate_video_count_from_hits
+
+        if candidate_video_ids:
+            video_status, video_body = fetch_video_snapshots(
+                api_key=api_key,
+                video_ids=candidate_video_ids,
+            )
+            api_call_count += 1
+            if video_status != 200:
+                error_summary = extract_error_summary(video_body)
+                if log_progress:
+                    print(
+                        f"  [scope {scope_index}/{total_scope_count}] fail "
+                        f"{scope_name} "
+                        f"status={video_status} "
+                        f"pages={fetched_pages}/{target_pages} "
+                        f"apiCalls={api_call_count} "
+                        f"error={error_summary}"
+                    )
+                return {
+                    "statusCode": video_status,
+                    "chartScope": "search",
+                    "searchSeedCode": search_seed_code,
+                    "searchSeedGroup": search_seed_group,
+                    "searchSeedLabel": search_seed_label,
+                    "sourceQuery": source_query,
+                    "targetPages": target_pages,
+                    "fetchedPages": fetched_pages,
+                    "searchHitCount": search_hit_count,
+                    "videoSnapshotCount": video_snapshot_count,
+                    "channelSnapshotCount": channel_snapshot_count,
+                    "duplicateVideoSkipCount": (
+                        duplicate_video_skip_count
+                    ),
+                    "duplicateChannelSkipCount": (
+                        duplicate_channel_skip_count
+                    ),
+                    "apiCallCount": api_call_count,
+                    "error": video_body.get("error"),
+                }
+
+            video_snapshot_records = build_video_snapshot_records(
+                items=video_body.get("items", []),
+                region_code=region_code,
+                collected_at=collected_at,
+                run_id=run_id,
+                chart_scope="search",
+                requested_video_category_id=None,
+                requested_video_category_label=search_seed_code,
+                page_number=page_number,
+                max_results=max_results,
+                source="youtube.videos.list.byId",
+            )
+            (
+                new_video_snapshot_records,
+                duplicate_video_count_from_snapshots,
+            ) = filter_new_video_snapshot_records(
+                video_snapshot_records,
+                seen_video_ids,
+            )
+            duplicate_video_skip_count += (
+                duplicate_video_count_from_snapshots
+            )
+            if writer:
+                writer.write_jsonl_records(
+                    "video_snapshots",
+                    new_video_snapshot_records,
+                )
+            video_snapshot_count += len(new_video_snapshot_records)
+
+            if include_channel_snapshots:
+                channel_ids = [
+                    item.get("snippet", {}).get("channelId")
+                    for item in video_body.get("items", [])
+                    if item.get("snippet", {}).get("channelId")
+                ]
+                (
+                    new_channel_ids,
+                    duplicate_channel_count_for_page,
+                ) = filter_new_channel_ids(channel_ids, seen_channel_ids)
+                duplicate_channel_skip_count += (
+                    duplicate_channel_count_for_page
+                )
+                if new_channel_ids:
+                    channel_status, channel_body = fetch_channel_snapshots(
+                        api_key=api_key,
+                        channel_ids=new_channel_ids,
+                    )
+                    api_call_count += 1
+                    if channel_status != 200:
+                        error_summary = extract_error_summary(channel_body)
+                        if log_progress:
+                            print(
+                                f"  [scope {scope_index}/{total_scope_count}] fail "
+                                f"{scope_name} "
+                                f"status={channel_status} "
+                                f"pages={fetched_pages}/{target_pages} "
+                                f"apiCalls={api_call_count} "
+                                f"error={error_summary}"
+                            )
+                        return {
+                            "statusCode": channel_status,
+                            "chartScope": "search",
+                            "searchSeedCode": search_seed_code,
+                            "searchSeedGroup": search_seed_group,
+                            "searchSeedLabel": search_seed_label,
+                            "sourceQuery": source_query,
+                            "targetPages": target_pages,
+                            "fetchedPages": fetched_pages,
+                            "searchHitCount": search_hit_count,
+                            "videoSnapshotCount": (
+                                video_snapshot_count
+                            ),
+                            "channelSnapshotCount": (
+                                channel_snapshot_count
+                            ),
+                            "duplicateVideoSkipCount": (
+                                duplicate_video_skip_count
+                            ),
+                            "duplicateChannelSkipCount": (
+                                duplicate_channel_skip_count
+                            ),
+                            "apiCallCount": api_call_count,
+                            "error": channel_body.get("error"),
+                        }
+
+                    channel_records = build_channel_snapshot_records(
+                        items=channel_body.get("items", []),
+                        region_code=region_code,
+                        collected_at=collected_at,
+                        run_id=run_id,
+                        chart_scope="search",
+                        requested_video_category_id=None,
+                        requested_video_category_label=search_seed_code,
+                        page_number=page_number,
+                        source="youtube.channels.list",
+                    )
+                    if writer:
+                        writer.write_jsonl_records(
+                            "channel_snapshots",
+                            channel_records,
+                        )
+                    channel_snapshot_count += len(channel_records)
+
+        if log_progress and should_log_page_progress(
+            page_number,
+            target_pages,
+            effective_log_every_pages,
+        ):
+            start_rank = ((page_number - 1) * max_results) + 1
+            end_rank = start_rank + len(items) - 1
+            progress_percent = min((page_number / target_pages) * 100, 100.0)
+            print(
+                f"    page {page_number}/{target_pages} "
+                f"{progress_percent:5.1f}% "
+                f"rank={start_rank}-{end_rank} "
+                f"searchHits={search_hit_count} "
+                f"videos={video_snapshot_count} "
+                f"channels={channel_snapshot_count} "
+                f"dupVideos={duplicate_video_skip_count} "
+                f"dupChannels={duplicate_channel_skip_count}"
+            )
+
+        page_token = response_body.get("nextPageToken")
+        if not page_token:
+            break
+        page_number += 1
+
+    elapsed = time.time() - scope_started_at
+    if log_progress:
+        print(
+            f"  [scope {scope_index}/{total_scope_count}] done "
+            f"{scope_name} "
+            f"pages={fetched_pages}/{target_pages} "
+            f"searchHits={search_hit_count} "
+            f"videos={video_snapshot_count} "
+            f"channels={channel_snapshot_count} "
+            f"dupVideos={duplicate_video_skip_count} "
+            f"dupChannels={duplicate_channel_skip_count} "
+            f"apiCalls={api_call_count} "
+            f"elapsed={elapsed:.1f}s"
+        )
+
+    return {
+        "statusCode": 200,
+        "chartScope": "search",
+        "searchSeedCode": search_seed_code,
+        "searchSeedGroup": search_seed_group,
+        "searchSeedLabel": search_seed_label,
+        "sourceQuery": source_query,
+        "targetPages": target_pages,
+        "fetchedPages": fetched_pages,
+        "searchHitCount": search_hit_count,
+        "videoSnapshotCount": video_snapshot_count,
+        "channelSnapshotCount": channel_snapshot_count,
+        "duplicateVideoSkipCount": duplicate_video_skip_count,
+        "duplicateChannelSkipCount": duplicate_channel_skip_count,
+        "apiCallCount": api_call_count,
+    }
+
+
 def handler(event, context):
     event = event or {}
     print_response = event.get("printResponse", False)
@@ -469,6 +837,7 @@ def handler(event, context):
 
     include_overall_chart = event.get("includeOverallChart", True)
     include_category_charts = event.get("includeCategoryCharts", True)
+    include_search_lane = event.get("includeSearchLane", False)
     include_channel_snapshots = event.get(
         "includeChannelSnapshots",
         True,
@@ -480,6 +849,13 @@ def handler(event, context):
     )
     if log_every_pages is not None and log_every_pages < 1:
         raise ValueError("logEveryPages must be >= 1")
+    search_lookback_days = get_int_event_value(
+        event,
+        "searchLookbackDays",
+        7,
+        min_value=1,
+        max_value=365,
+    )
     save_to_file = event.get("saveToFile", not is_running_in_lambda())
     save_split_files = event.get("saveSplitFiles", save_to_file)
     save_bundle_file = event.get("saveBundleFile", save_to_file)
@@ -497,11 +873,16 @@ def handler(event, context):
         if save_to_file and save_split_files
         else None
     )
+    broad_search_region_plan = get_broad_search_region_plan(
+        region_plan["code"]
+    )
     total_scope_count = 0
     if include_overall_chart:
         total_scope_count += 1
     if include_category_charts:
         total_scope_count += len(region_plan["category_allocations"])
+    if include_search_lane and broad_search_region_plan:
+        total_scope_count += len(broad_search_region_plan["seeds"])
 
     try:
         if log_progress:
@@ -511,12 +892,15 @@ def handler(event, context):
                 f"target={region_plan['daily_target_videos']} "
                 f"overall={region_plan['overall_target_videos']} "
                 f"category={region_plan['category_target_videos']} "
+                f"searchPages="
+                f"{broad_search_region_plan['total_target_pages'] if broad_search_region_plan else 0} "
                 f"scopes={total_scope_count}"
             )
 
         scope_summaries: list[dict[str, Any]] = []
         scope_errors: list[dict[str, Any]] = []
         total_chart_hits = 0
+        total_search_hits = 0
         total_video_snapshots = 0
         total_channel_snapshots = 0
         total_duplicate_video_skips = 0
@@ -613,8 +997,66 @@ def handler(event, context):
                     total_duplicate_channel_skips += category_summary.get(
                         "duplicateChannelSkipCount",
                         0,
+                )
+            total_api_calls += category_summary["apiCallCount"]
+
+        if include_search_lane:
+            if not broad_search_region_plan:
+                raise ValueError(
+                    f"No broad search plan for region {region_plan['code']}"
+                )
+            published_after = utc_days_ago_iso(search_lookback_days)
+            for seed in broad_search_region_plan["seeds"]:
+                scope_index += 1
+                target_pages = seed["target_pages"]
+                if max_pages_per_scope is not None:
+                    target_pages = min(target_pages, max_pages_per_scope)
+                search_summary = scrape_search_scope(
+                    api_key=api_key,
+                    writer=writer,
+                    region_code=region_plan["code"],
+                    collected_at=collected_at,
+                    run_id=run_id,
+                    query_language=broad_search_region_plan["language"],
+                    source_query=seed["primary_query"],
+                    search_seed_code=seed["code"],
+                    search_seed_group=seed["group"],
+                    search_seed_label=seed["label"]["ko"],
+                    target_pages=target_pages,
+                    max_results=max_results,
+                    published_after=published_after,
+                    include_channel_snapshots=include_channel_snapshots,
+                    scope_index=scope_index,
+                    total_scope_count=total_scope_count,
+                    log_progress=log_progress,
+                    log_every_pages=log_every_pages,
+                    seen_video_ids=seen_video_ids,
+                    seen_channel_ids=seen_channel_ids,
+                )
+                scope_summaries.append(search_summary)
+                if search_summary["statusCode"] != 200:
+                    scope_errors.append(search_summary)
+                else:
+                    successful_scope_count += 1
+                    total_search_hits += search_summary.get(
+                        "searchHitCount",
+                        0,
                     )
-                total_api_calls += category_summary["apiCallCount"]
+                    total_video_snapshots += search_summary[
+                        "videoSnapshotCount"
+                    ]
+                    total_channel_snapshots += search_summary[
+                        "channelSnapshotCount"
+                    ]
+                    total_duplicate_video_skips += search_summary.get(
+                        "duplicateVideoSkipCount",
+                        0,
+                    )
+                    total_duplicate_channel_skips += search_summary.get(
+                        "duplicateChannelSkipCount",
+                        0,
+                    )
+                total_api_calls += search_summary["apiCallCount"]
 
         final_status_code = 200 if successful_scope_count > 0 else 502
         response = {
@@ -630,7 +1072,9 @@ def handler(event, context):
                 "maxPagesPerScope": max_pages_per_scope,
                 "includeOverallChart": include_overall_chart,
                 "includeCategoryCharts": include_category_charts,
+                "includeSearchLane": include_search_lane,
                 "includeChannelSnapshots": include_channel_snapshots,
+                "searchLookbackDays": search_lookback_days,
                 "logProgress": log_progress,
                 "logEveryPages": log_every_pages,
                 "outputDir": output_dir,
@@ -642,6 +1086,7 @@ def handler(event, context):
                 "successfulScopeCount": successful_scope_count,
                 "failedScopeCount": len(scope_errors),
                 "chartHitCount": total_chart_hits,
+                "searchHitCount": total_search_hits,
                 "videoSnapshotCount": total_video_snapshots,
                 "channelSnapshotCount": total_channel_snapshots,
                 "duplicateVideoSkipCount": total_duplicate_video_skips,
@@ -667,6 +1112,7 @@ def handler(event, context):
                 f"status={final_status_code} "
                 f"scopeFail={len(scope_errors)} "
                 f"chartHits={total_chart_hits} "
+                f"searchHits={total_search_hits} "
                 f"videos={total_video_snapshots} "
                 f"channels={total_channel_snapshots} "
                 f"dupVideos={total_duplicate_video_skips} "
