@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import time
 from typing import Any
 
 from utils import (
@@ -66,6 +67,64 @@ def build_overview_response() -> dict[str, Any]:
     }
 
 
+def build_scope_name(
+    chart_scope: str,
+    requested_video_category_id: str | None,
+    requested_video_category_label: str | None,
+) -> str:
+    if chart_scope == "overall":
+        return "overall"
+    if requested_video_category_id and requested_video_category_label:
+        return (
+            f"category {requested_video_category_id} "
+            f"{requested_video_category_label}"
+        )
+    if requested_video_category_id:
+        return f"category {requested_video_category_id}"
+    return chart_scope
+
+
+def extract_error_summary(response_body: dict[str, Any]) -> str:
+    error = response_body.get("error", {})
+    details = error.get("errors", [])
+    reason = ""
+    if details:
+        reason = details[0].get("reason", "")
+    message = error.get("message", "")
+    if reason and message:
+        return f"{reason}: {message}"
+    return reason or message or "unknown error"
+
+
+def get_log_every_pages(
+    target_pages: int,
+    configured_value: int | None,
+) -> int:
+    if configured_value is not None:
+        return max(1, configured_value)
+    if target_pages <= 10:
+        return 1
+    if target_pages <= 100:
+        return 10
+    if target_pages <= 500:
+        return 25
+    if target_pages <= 1000:
+        return 50
+    return 100
+
+
+def should_log_page_progress(
+    page_number: int,
+    target_pages: int,
+    log_every_pages: int,
+) -> bool:
+    return (
+        page_number == 1
+        or page_number == target_pages
+        or page_number % log_every_pages == 0
+    )
+
+
 def scrape_scope(
     *,
     api_key: str,
@@ -80,10 +139,32 @@ def scrape_scope(
     max_results: int,
     max_pages_per_scope: int | None,
     include_channel_snapshots: bool,
+    scope_index: int,
+    total_scope_count: int,
+    log_progress: bool,
+    log_every_pages: int | None,
 ) -> dict[str, Any]:
+    scope_started_at = time.time()
+    scope_name = build_scope_name(
+        chart_scope,
+        requested_video_category_id,
+        requested_video_category_label,
+    )
     target_pages = math.ceil(target_videos / max_results)
     if max_pages_per_scope is not None:
         target_pages = min(target_pages, max_pages_per_scope)
+    effective_log_every_pages = get_log_every_pages(
+        target_pages,
+        log_every_pages,
+    )
+
+    if log_progress:
+        print(
+            f"  [scope {scope_index}/{total_scope_count}] start "
+            f"{scope_name} "
+            f"targetVideos={target_videos} "
+            f"targetPages={target_pages}"
+        )
 
     page_number = 1
     page_token = None
@@ -103,6 +184,16 @@ def scrape_scope(
         )
         api_call_count += 1
         if status_code != 200:
+            error_summary = extract_error_summary(response_body)
+            if log_progress:
+                print(
+                    f"  [scope {scope_index}/{total_scope_count}] fail "
+                    f"{scope_name} "
+                    f"status={status_code} "
+                    f"pages={fetched_pages}/{target_pages} "
+                    f"apiCalls={api_call_count} "
+                    f"error={error_summary}"
+                )
             return {
                 "statusCode": status_code,
                 "chartScope": chart_scope,
@@ -168,6 +259,16 @@ def scrape_scope(
             )
             api_call_count += 1
             if channel_status != 200:
+                error_summary = extract_error_summary(channel_body)
+                if log_progress:
+                    print(
+                        f"  [scope {scope_index}/{total_scope_count}] fail "
+                        f"{scope_name} "
+                        f"status={channel_status} "
+                        f"pages={fetched_pages}/{target_pages} "
+                        f"apiCalls={api_call_count} "
+                        f"error={error_summary}"
+                    )
                 return {
                     "statusCode": channel_status,
                     "chartScope": chart_scope,
@@ -200,10 +301,40 @@ def scrape_scope(
                 )
             channel_snapshot_count += len(channel_records)
 
+        if log_progress and should_log_page_progress(
+            page_number,
+            target_pages,
+            effective_log_every_pages,
+        ):
+            progress_percent = min((page_number / target_pages) * 100, 100.0)
+            start_rank = ((page_number - 1) * max_results) + 1
+            end_rank = start_rank + len(items) - 1
+            print(
+                f"    page {page_number}/{target_pages} "
+                f"{progress_percent:5.1f}% "
+                f"rank={start_rank}-{end_rank} "
+                f"hits={chart_hit_count} "
+                f"videos={video_snapshot_count} "
+                f"channels={channel_snapshot_count}"
+            )
+
         page_token = response_body.get("nextPageToken")
         if not page_token:
             break
         page_number += 1
+
+    elapsed = time.time() - scope_started_at
+    if log_progress:
+        print(
+            f"  [scope {scope_index}/{total_scope_count}] done "
+            f"{scope_name} "
+            f"pages={fetched_pages}/{target_pages} "
+            f"hits={chart_hit_count} "
+            f"videos={video_snapshot_count} "
+            f"channels={channel_snapshot_count} "
+            f"apiCalls={api_call_count} "
+            f"elapsed={elapsed:.1f}s"
+        )
 
     return {
         "statusCode": 200,
@@ -222,6 +353,7 @@ def scrape_scope(
 
 def handler(event, context):
     event = event or {}
+    print_response = event.get("printResponse", False)
     load_local_env_if_present()
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
@@ -230,7 +362,8 @@ def handler(event, context):
     region_code = event.get("regionCode")
     if not region_code:
         response = build_overview_response()
-        print(json.dumps(response, ensure_ascii=False, indent=2))
+        if print_response:
+            print(json.dumps(response, ensure_ascii=False, indent=2))
         return response
 
     region_plan = get_region_plan(region_code)
@@ -240,7 +373,8 @@ def handler(event, context):
             "generatedAt": utc_now_iso(),
             "error": {"message": f"Unknown regionCode: {region_code}"},
         }
-        print(json.dumps(response, ensure_ascii=False, indent=2))
+        if print_response:
+            print(json.dumps(response, ensure_ascii=False, indent=2))
         return response
 
     max_results = get_int_event_value(
@@ -265,6 +399,13 @@ def handler(event, context):
         "includeChannelSnapshots",
         True,
     )
+    log_progress = event.get("logProgress", not is_running_in_lambda())
+    log_every_pages_raw = event.get("logEveryPages")
+    log_every_pages = (
+        int(log_every_pages_raw) if log_every_pages_raw is not None else None
+    )
+    if log_every_pages is not None and log_every_pages < 1:
+        raise ValueError("logEveryPages must be >= 1")
     save_to_file = event.get("saveToFile", not is_running_in_lambda())
     save_split_files = event.get("saveSplitFiles", save_to_file)
     save_bundle_file = event.get("saveBundleFile", save_to_file)
@@ -282,8 +423,23 @@ def handler(event, context):
         if save_to_file and save_split_files
         else None
     )
+    total_scope_count = 0
+    if include_overall_chart:
+        total_scope_count += 1
+    if include_category_charts:
+        total_scope_count += len(region_plan["category_allocations"])
 
     try:
+        if log_progress:
+            print(
+                f"[region {region_plan['code']}] start "
+                f"tier={region_plan['tier']} "
+                f"target={region_plan['daily_target_videos']} "
+                f"overall={region_plan['overall_target_videos']} "
+                f"category={region_plan['category_target_videos']} "
+                f"scopes={total_scope_count}"
+            )
+
         scope_summaries: list[dict[str, Any]] = []
         scope_errors: list[dict[str, Any]] = []
         total_chart_hits = 0
@@ -291,8 +447,10 @@ def handler(event, context):
         total_channel_snapshots = 0
         total_api_calls = 0
         successful_scope_count = 0
+        scope_index = 0
 
         if include_overall_chart:
+            scope_index += 1
             overall_summary = scrape_scope(
                 api_key=api_key,
                 writer=writer,
@@ -306,6 +464,10 @@ def handler(event, context):
                 max_results=max_results,
                 max_pages_per_scope=max_pages_per_scope,
                 include_channel_snapshots=include_channel_snapshots,
+                scope_index=scope_index,
+                total_scope_count=total_scope_count,
+                log_progress=log_progress,
+                log_every_pages=log_every_pages,
             )
             scope_summaries.append(overall_summary)
             if overall_summary["statusCode"] != 200:
@@ -323,6 +485,7 @@ def handler(event, context):
 
         if include_category_charts:
             for allocation in region_plan["category_allocations"]:
+                scope_index += 1
                 category_summary = scrape_scope(
                     api_key=api_key,
                     writer=writer,
@@ -336,6 +499,10 @@ def handler(event, context):
                     max_results=max_results,
                     max_pages_per_scope=max_pages_per_scope,
                     include_channel_snapshots=include_channel_snapshots,
+                    scope_index=scope_index,
+                    total_scope_count=total_scope_count,
+                    log_progress=log_progress,
+                    log_every_pages=log_every_pages,
                 )
                 scope_summaries.append(category_summary)
                 if category_summary["statusCode"] != 200:
@@ -366,6 +533,8 @@ def handler(event, context):
                 "includeOverallChart": include_overall_chart,
                 "includeCategoryCharts": include_category_charts,
                 "includeChannelSnapshots": include_channel_snapshots,
+                "logProgress": log_progress,
+                "logEveryPages": log_every_pages,
                 "outputDir": output_dir,
             },
             "scopeSummaries": scope_summaries,
@@ -390,7 +559,18 @@ def handler(event, context):
 
         if writer and save_bundle_file:
             writer.write_bundle(response)
-        print(json.dumps(response, ensure_ascii=False, indent=2))
+        if log_progress:
+            print(
+                f"[region {region_plan['code']}] done "
+                f"status={final_status_code} "
+                f"scopeFail={len(scope_errors)} "
+                f"chartHits={total_chart_hits} "
+                f"videos={total_video_snapshots} "
+                f"channels={total_channel_snapshots} "
+                f"apiCalls={total_api_calls}"
+            )
+        if print_response:
+            print(json.dumps(response, ensure_ascii=False, indent=2))
         return response
     finally:
         if writer:

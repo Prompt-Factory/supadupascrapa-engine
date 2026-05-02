@@ -255,6 +255,9 @@ python3 lambdas/youtube_scraper/run_full_scrape.py
   "includeOverallChart": true,
   "includeCategoryCharts": true,
   "includeChannelSnapshots": true,
+  "logProgress": true,
+  "logEveryPages": 1,
+  "printResponse": false,
   "saveToFile": true,
   "saveSplitFiles": true,
   "saveBundleFile": true,
@@ -270,12 +273,16 @@ python3 lambdas/youtube_scraper/run_full_scrape.py
 - `includeOverallChart`: overall chart 수집 여부
 - `includeCategoryCharts`: category chart 수집 여부
 - `includeChannelSnapshots`: channel snapshot 저장 여부
+- `logProgress`: 터미널 progress 로그 출력 여부
+- `logEveryPages`: page progress를 몇 page마다 찍을지
+- `printResponse`: 최종 response JSON 전체 출력 여부
 
 실행 결과:
 
 - `chart_hits`, `video_snapshots`, `channel_snapshots`는 JSONL로 저장됩니다
 - `runs`에는 summary bundle JSON이 저장됩니다
 - 일부 category chart가 `404 notFound`여도 `scopeErrors`에 기록하고 나머지 scope는 계속 진행합니다
+- 로컬 실행 시 터미널에는 `region -> scope -> page checkpoint -> summary` 순서로 progress가 출력됩니다
 
 ## 배포
 
@@ -288,6 +295,11 @@ GitHub Actions 워크플로: `.github/workflows/deploy-lambda.yml`
 동작 방식:
 - `handler.py`가 있는 `lambdas/*` 폴더를 자동 탐색합니다
 - 탐색된 각 Lambda를 matrix job으로 배포합니다
+
+## 운영 계획
+
+- 현재 실행 방식은 manual run 기준입니다
+- 운영 전환 시 매일 한국시간 오후 1시 (`KST 13:00`)에 자동 실행되도록 scheduler를 둘 예정입니다
 - Lambda 이름은 `${LAMBDA_NAME_PREFIX}<folder_name>` 형식으로 동적으로 결정됩니다
 - Lambda가 이미 있으면 코드를 업데이트합니다
 - Lambda가 없으면 새로 생성합니다

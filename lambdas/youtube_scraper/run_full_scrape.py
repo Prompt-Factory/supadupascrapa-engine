@@ -19,6 +19,11 @@ def parse_args() -> argparse.Namespace:
         help="Limit page count per scope for testing.",
     )
     parser.add_argument(
+        "--log-every-pages",
+        type=int,
+        help="Print page-level progress every N pages.",
+    )
+    parser.add_argument(
         "--skip-save",
         action="store_true",
         help="Do not write output files.",
@@ -45,21 +50,29 @@ def main() -> None:
 
     for index, plan in enumerate(targets, start=1):
         started_at = time.time()
+        print()
         print(
-            f"[{index}/{total_regions}] {plan['code']} "
-            f"tier={plan['tier']} "
+            f"=== Region {index}/{total_regions}: {plan['code']} "
+            f"(tier {plan['tier']}) ==="
+        )
+        print(
             f"target={plan['daily_target_videos']} "
             f"overall={plan['overall_target_videos']} "
-            f"category={plan['category_target_videos']}"
+            f"category={plan['category_target_videos']} "
+            f"allocations={len(plan['category_allocations'])}"
         )
         event = {
             "regionCode": plan["code"],
+            "logProgress": True,
+            "printResponse": False,
             "saveToFile": not args.skip_save,
             "saveSplitFiles": not args.skip_save,
             "saveBundleFile": not args.skip_save,
         }
         if args.max_pages_per_scope:
             event["maxPagesPerScope"] = args.max_pages_per_scope
+        if args.log_every_pages:
+            event["logEveryPages"] = args.log_every_pages
 
         response = handler(event, None)
         status_code = response.get("statusCode")
@@ -71,16 +84,17 @@ def main() -> None:
             fail_count += 1
 
         print(
-            f"  done status={status_code} "
+            f"batchProgress ok={ok_count} fail={fail_count} "
+            f"lastRegion={plan['code']} "
+            f"status={status_code} "
             f"scopeFail={summary.get('failedScopeCount', 0)} "
-            f"chartHits={summary.get('chartHitCount', 0)} "
             f"videos={summary.get('videoSnapshotCount', 0)} "
-            f"channels={summary.get('channelSnapshotCount', 0)} "
             f"apiCalls={summary.get('apiCallCount', 0)} "
             f"elapsed={elapsed:.1f}s"
         )
 
     total_elapsed = time.time() - batch_started_at
+    print()
     print(
         f"completed regions={total_regions} ok={ok_count} fail={fail_count} "
         f"elapsed={total_elapsed:.1f}s"
