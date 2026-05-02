@@ -1,5 +1,7 @@
 import json
 import os
+import shutil
+import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
@@ -53,6 +55,57 @@ def build_run_id(region_code: str, collected_at: str) -> str:
     return f"{compact_timestamp}_{region_code}_{uuid4().hex[:10]}"
 
 
+def normalize_s3_prefix(prefix: str) -> str:
+    normalized = prefix.strip().strip("/")
+    return normalized
+
+
+def build_s3_key(
+    *,
+    s3_prefix: str,
+    region_code: str,
+    subdir: str,
+    date_partition: str,
+    filename: str,
+) -> str:
+    normalized_prefix = normalize_s3_prefix(s3_prefix)
+    parts = [
+        normalized_prefix,
+        f"region={region_code}",
+        subdir,
+        f"date={date_partition}",
+        filename,
+    ]
+    return "/".join(part for part in parts if part)
+
+
+def build_batch_s3_key(
+    *,
+    s3_prefix: str,
+    date_partition: str,
+    filename: str,
+) -> str:
+    normalized_prefix = normalize_s3_prefix(s3_prefix)
+    parts = [
+        normalized_prefix,
+        "batches",
+        f"date={date_partition}",
+        filename,
+    ]
+    return "/".join(part for part in parts if part)
+
+
+def build_s3_uri(bucket: str, key: str) -> str:
+    return f"s3://{bucket}/{key}"
+
+
+def resolve_output_dir(output_dir: str) -> Path:
+    output_path = Path(output_dir)
+    if output_path.is_absolute():
+        return output_path
+    return REPO_ROOT / output_path
+
+
 def build_partitioned_output_path(
     *,
     output_dir: str,
@@ -71,11 +124,14 @@ def build_partitioned_output_path(
     )
 
 
-def resolve_output_dir(output_dir: str) -> Path:
-    output_path = Path(output_dir)
-    if output_path.is_absolute():
-        return output_path
-    return REPO_ROOT / output_path
+def build_batch_output_path(
+    *,
+    output_dir: str,
+    date_partition: str,
+    filename: str,
+) -> Path:
+    output_root = resolve_output_dir(output_dir)
+    return output_root / "batches" / f"date={date_partition}" / filename
 
 
 class JsonlOutputWriter:
@@ -177,6 +233,232 @@ class JsonlOutputWriter:
         if include_bundle:
             saved_files["bundleFile"] = str(self.paths["bundle"])
         return saved_files
+
+
+class S3JsonlOutputWriter:
+    def __init__(
+        self,
+        *,
+        region_code: str,
+        run_id: str,
+        collected_at: str,
+        s3_bucket: str,
+        s3_prefix: str,
+    ) -> None:
+        try:
+            import boto3
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "boto3 is required for S3 output in Lambda"
+            ) from exc
+
+        date_partition = collected_at[:10]
+        self.s3_bucket = s3_bucket
+        self.s3_prefix = s3_prefix
+        self._s3_client = boto3.client("s3")
+        self._temp_root = Path(
+            tempfile.mkdtemp(prefix="youtube_scraper_", dir="/tmp")
+        )
+        self._handles: dict[str, TextIO] = {}
+        self.local_paths = {
+            "chart_hits": self._temp_root / "chart_hits.jsonl",
+            "search_hits": self._temp_root / "search_hits.jsonl",
+            "video_snapshots": self._temp_root / "video_snapshots.jsonl",
+            "channel_snapshots": (
+                self._temp_root / "channel_snapshots.jsonl"
+            ),
+            "bundle": self._temp_root / "bundle.json",
+        }
+        self.s3_keys = {
+            "chart_hits": build_s3_key(
+                s3_prefix=s3_prefix,
+                region_code=region_code,
+                subdir="chart_hits",
+                date_partition=date_partition,
+                filename=f"{run_id}.jsonl",
+            ),
+            "search_hits": build_s3_key(
+                s3_prefix=s3_prefix,
+                region_code=region_code,
+                subdir="search_hits",
+                date_partition=date_partition,
+                filename=f"{run_id}.jsonl",
+            ),
+            "video_snapshots": build_s3_key(
+                s3_prefix=s3_prefix,
+                region_code=region_code,
+                subdir="video_snapshots",
+                date_partition=date_partition,
+                filename=f"{run_id}.jsonl",
+            ),
+            "channel_snapshots": build_s3_key(
+                s3_prefix=s3_prefix,
+                region_code=region_code,
+                subdir="channel_snapshots",
+                date_partition=date_partition,
+                filename=f"{run_id}.jsonl",
+            ),
+            "bundle": build_s3_key(
+                s3_prefix=s3_prefix,
+                region_code=region_code,
+                subdir="runs",
+                date_partition=date_partition,
+                filename=f"{run_id}.json",
+            ),
+        }
+
+    def _get_handle(self, stream_name: str) -> TextIO:
+        handle = self._handles.get(stream_name)
+        if handle:
+            return handle
+        path = self.local_paths[stream_name]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = path.open("a", encoding="utf-8")
+        self._handles[stream_name] = handle
+        return handle
+
+    def write_jsonl_records(
+        self,
+        stream_name: str,
+        records: list[dict[str, Any]],
+    ) -> None:
+        if not records:
+            return
+        handle = self._get_handle(stream_name)
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        handle.flush()
+
+    def write_bundle(self, payload: dict[str, Any]) -> str:
+        path = self.local_paths["bundle"]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return build_s3_uri(self.s3_bucket, self.s3_keys["bundle"])
+
+    def close(self) -> None:
+        try:
+            for handle in self._handles.values():
+                handle.close()
+            self._handles.clear()
+            for stream_name, local_path in self.local_paths.items():
+                if not local_path.exists():
+                    continue
+                self._s3_client.upload_file(
+                    str(local_path),
+                    self.s3_bucket,
+                    self.s3_keys[stream_name],
+                )
+        finally:
+            shutil.rmtree(self._temp_root, ignore_errors=True)
+
+    def build_saved_files_payload(
+        self,
+        *,
+        include_bundle: bool,
+    ) -> dict[str, str]:
+        saved_files = {
+            "chartHitsFile": build_s3_uri(
+                self.s3_bucket,
+                self.s3_keys["chart_hits"],
+            ),
+            "searchHitsFile": build_s3_uri(
+                self.s3_bucket,
+                self.s3_keys["search_hits"],
+            ),
+            "videoSnapshotsFile": build_s3_uri(
+                self.s3_bucket,
+                self.s3_keys["video_snapshots"],
+            ),
+            "channelSnapshotsFile": build_s3_uri(
+                self.s3_bucket,
+                self.s3_keys["channel_snapshots"],
+            ),
+        }
+        if include_bundle:
+            saved_files["bundleFile"] = build_s3_uri(
+                self.s3_bucket,
+                self.s3_keys["bundle"],
+            )
+        return saved_files
+
+
+def create_output_writer(
+    *,
+    output_storage: str,
+    output_dir: str,
+    region_code: str,
+    run_id: str,
+    collected_at: str,
+    s3_bucket: str | None,
+    s3_prefix: str,
+) -> JsonlOutputWriter | S3JsonlOutputWriter:
+    if output_storage == "s3":
+        if not s3_bucket:
+            raise ValueError("OUTPUT_S3_BUCKET is required for S3 output")
+        return S3JsonlOutputWriter(
+            region_code=region_code,
+            run_id=run_id,
+            collected_at=collected_at,
+            s3_bucket=s3_bucket,
+            s3_prefix=s3_prefix,
+        )
+    if output_storage == "local":
+        return JsonlOutputWriter(
+            output_dir=output_dir,
+            region_code=region_code,
+            run_id=run_id,
+            collected_at=collected_at,
+        )
+    raise ValueError(f"Unsupported output storage: {output_storage}")
+
+
+def write_batch_summary_payload(
+    *,
+    output_storage: str,
+    output_dir: str,
+    collected_at: str,
+    batch_run_id: str,
+    payload: dict[str, Any],
+    s3_bucket: str | None,
+    s3_prefix: str,
+) -> str:
+    date_partition = collected_at[:10]
+    filename = f"{batch_run_id}.json"
+    body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+    if output_storage == "s3":
+        if not s3_bucket:
+            raise ValueError("OUTPUT_S3_BUCKET is required for S3 output")
+        try:
+            import boto3
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "boto3 is required for S3 output in Lambda"
+            ) from exc
+        key = build_batch_s3_key(
+            s3_prefix=s3_prefix,
+            date_partition=date_partition,
+            filename=filename,
+        )
+        boto3.client("s3").put_object(
+            Bucket=s3_bucket,
+            Key=key,
+            Body=body,
+            ContentType="application/json",
+        )
+        return build_s3_uri(s3_bucket, key)
+
+    path = build_batch_output_path(
+        output_dir=output_dir,
+        date_partition=date_partition,
+        filename=filename,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+    return str(path)
 
 
 def build_chart_hit_records(

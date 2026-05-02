@@ -6,12 +6,12 @@ from typing import Any
 
 from broad_search_seed_config import (
     BROAD_SEARCH_REGION_PLANS,
-    DEFAULT_SEARCH_TOP_UP_PAGES_BY_TIER,
 )
 from utils import (
     JsonlOutputWriter,
     build_chart_hit_records,
     build_channel_snapshot_records,
+    create_output_writer,
     build_search_hit_records,
     build_run_id,
     build_video_snapshot_records,
@@ -19,6 +19,7 @@ from utils import (
     load_local_env_if_present,
     utc_days_ago_iso,
     utc_now_iso,
+    write_batch_summary_payload,
 )
 from v3_region_config import (
     V3_ESTIMATED_DAILY_QUOTA_HEADROOM,
@@ -33,6 +34,9 @@ from youtube_client import (
     fetch_search_page,
     fetch_video_snapshots,
 )
+
+
+SCRAPER_VERSION = "v3.1"
 
 
 def get_region_plan(region_code: str):
@@ -68,7 +72,7 @@ def build_overview_response() -> dict[str, Any]:
     return {
         "statusCode": 200,
         "generatedAt": utc_now_iso(),
-        "version": "v3-mostPopular",
+        "version": SCRAPER_VERSION,
         "regions": V3_REGION_PLANS,
         "summary": {
             "regionCount": len(V3_REGION_PLANS),
@@ -793,32 +797,44 @@ def scrape_search_scope(
     }
 
 
-def handler(event, context):
-    event = event or {}
+def resolve_output_storage(event: dict[str, Any]) -> str:
+    configured_storage = event.get("outputStorage")
+    if configured_storage is None:
+        if is_running_in_lambda() and os.getenv("OUTPUT_S3_BUCKET"):
+            return "s3"
+        return "local"
+    normalized_storage = str(configured_storage).strip().lower()
+    if normalized_storage not in {"local", "s3"}:
+        raise ValueError(
+            "outputStorage must be either 'local' or 's3'"
+        )
+    return normalized_storage
+
+
+def get_target_region_plans(
+    region_codes: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    if not region_codes:
+        return V3_REGION_PLANS
+    requested_codes = {code.upper() for code in region_codes}
+    targets = [
+        plan
+        for plan in V3_REGION_PLANS
+        if plan["code"] in requested_codes
+    ]
+    missing_codes = sorted(requested_codes - {plan["code"] for plan in targets})
+    if missing_codes:
+        raise ValueError(f"Unknown region codes: {missing_codes}")
+    return targets
+
+
+def run_region_scrape(
+    *,
+    event: dict[str, Any],
+    api_key: str,
+    region_plan: dict[str, Any],
+) -> dict[str, Any]:
     print_response = event.get("printResponse", False)
-    load_local_env_if_present()
-    api_key = os.getenv("YOUTUBE_API_KEY")
-    if not api_key:
-        raise ValueError("YOUTUBE_API_KEY is not set")
-
-    region_code = event.get("regionCode")
-    if not region_code:
-        response = build_overview_response()
-        if print_response:
-            print(json.dumps(response, ensure_ascii=False, indent=2))
-        return response
-
-    region_plan = get_region_plan(region_code)
-    if not region_plan:
-        response = {
-            "statusCode": 404,
-            "generatedAt": utc_now_iso(),
-            "error": {"message": f"Unknown regionCode: {region_code}"},
-        }
-        if print_response:
-            print(json.dumps(response, ensure_ascii=False, indent=2))
-        return response
-
     max_results = get_int_event_value(
         event,
         "maxResults",
@@ -837,7 +853,7 @@ def handler(event, context):
 
     include_overall_chart = event.get("includeOverallChart", True)
     include_category_charts = event.get("includeCategoryCharts", True)
-    include_search_lane = event.get("includeSearchLane", False)
+    include_search_lane = event.get("includeSearchLane", True)
     include_channel_snapshots = event.get(
         "includeChannelSnapshots",
         True,
@@ -856,19 +872,34 @@ def handler(event, context):
         min_value=1,
         max_value=365,
     )
-    save_to_file = event.get("saveToFile", not is_running_in_lambda())
+    output_storage = resolve_output_storage(event)
+    default_save_to_file = (
+        True if output_storage == "s3" else not is_running_in_lambda()
+    )
+    save_to_file = event.get("saveToFile", default_save_to_file)
     save_split_files = event.get("saveSplitFiles", save_to_file)
     save_bundle_file = event.get("saveBundleFile", save_to_file)
     output_dir = event.get("outputDir", "outputs/youtube_scraper")
+    output_s3_bucket = (
+        event.get("outputS3Bucket") or os.getenv("OUTPUT_S3_BUCKET")
+    )
+    output_s3_prefix = (
+        event.get("outputS3Prefix")
+        or os.getenv("OUTPUT_S3_PREFIX")
+        or "youtube_scraper/"
+    )
 
     collected_at = utc_now_iso()
     run_id = build_run_id(region_plan["code"], collected_at)
     writer = (
-        JsonlOutputWriter(
+        create_output_writer(
+            output_storage=output_storage,
             output_dir=output_dir,
             region_code=region_plan["code"],
             run_id=run_id,
             collected_at=collected_at,
+            s3_bucket=output_s3_bucket,
+            s3_prefix=output_s3_prefix,
         )
         if save_to_file and save_split_files
         else None
@@ -997,8 +1028,8 @@ def handler(event, context):
                     total_duplicate_channel_skips += category_summary.get(
                         "duplicateChannelSkipCount",
                         0,
-                )
-            total_api_calls += category_summary["apiCallCount"]
+                    )
+                total_api_calls += category_summary["apiCallCount"]
 
         if include_search_lane:
             if not broad_search_region_plan:
@@ -1062,7 +1093,7 @@ def handler(event, context):
         response = {
             "statusCode": final_status_code,
             "generatedAt": utc_now_iso(),
-            "version": "v3-mostPopular",
+            "version": SCRAPER_VERSION,
             "regionPlan": region_plan,
             "request": {
                 "regionCode": region_plan["code"],
@@ -1077,7 +1108,10 @@ def handler(event, context):
                 "searchLookbackDays": search_lookback_days,
                 "logProgress": log_progress,
                 "logEveryPages": log_every_pages,
+                "outputStorage": output_storage,
                 "outputDir": output_dir,
+                "outputS3Bucket": output_s3_bucket,
+                "outputS3Prefix": output_s3_prefix,
             },
             "scopeSummaries": scope_summaries,
             "scopeErrors": scope_errors,
@@ -1125,6 +1159,189 @@ def handler(event, context):
     finally:
         if writer:
             writer.close()
+
+
+def run_batch_scrape(
+    *,
+    event: dict[str, Any],
+    api_key: str,
+) -> dict[str, Any]:
+    print_response = event.get("printResponse", False)
+    log_progress = event.get("logProgress", not is_running_in_lambda())
+    output_storage = resolve_output_storage(event)
+    default_save_to_file = (
+        True if output_storage == "s3" else not is_running_in_lambda()
+    )
+    save_to_file = event.get("saveToFile", default_save_to_file)
+    save_bundle_file = event.get("saveBundleFile", save_to_file)
+    output_dir = event.get("outputDir", "outputs/youtube_scraper")
+    output_s3_bucket = (
+        event.get("outputS3Bucket") or os.getenv("OUTPUT_S3_BUCKET")
+    )
+    output_s3_prefix = (
+        event.get("outputS3Prefix")
+        or os.getenv("OUTPUT_S3_PREFIX")
+        or "youtube_scraper/"
+    )
+    requested_region_codes = event.get("regionCodes")
+    target_plans = get_target_region_plans(requested_region_codes)
+    batch_collected_at = utc_now_iso()
+    batch_run_id = build_run_id("ALL", batch_collected_at)
+    total_regions = len(target_plans)
+    ok_count = 0
+    fail_count = 0
+    total_chart_hits = 0
+    total_search_hits = 0
+    total_video_snapshots = 0
+    total_channel_snapshots = 0
+    total_duplicate_video_skips = 0
+    total_duplicate_channel_skips = 0
+    total_api_calls = 0
+    region_results: list[dict[str, Any]] = []
+
+    for index, plan in enumerate(target_plans, start=1):
+        if log_progress:
+            print()
+            print(
+                f"=== Region {index}/{total_regions}: {plan['code']} "
+                f"(tier {plan['tier']}) ==="
+            )
+            print(
+                f"target={plan['daily_target_videos']} "
+                f"overall={plan['overall_target_videos']} "
+                f"category={plan['category_target_videos']} "
+                f"allocations={len(plan['category_allocations'])}"
+            )
+
+        region_event = dict(event)
+        region_event["regionCode"] = plan["code"]
+        response = run_region_scrape(
+            event=region_event,
+            api_key=api_key,
+            region_plan=plan,
+        )
+        region_results.append(response)
+        summary = response.get("summary", {})
+        status_code = response.get("statusCode", 502)
+        if status_code == 200:
+            ok_count += 1
+        else:
+            fail_count += 1
+
+        total_chart_hits += summary.get("chartHitCount", 0)
+        total_search_hits += summary.get("searchHitCount", 0)
+        total_video_snapshots += summary.get("videoSnapshotCount", 0)
+        total_channel_snapshots += summary.get("channelSnapshotCount", 0)
+        total_duplicate_video_skips += summary.get(
+            "duplicateVideoSkipCount",
+            0,
+        )
+        total_duplicate_channel_skips += summary.get(
+            "duplicateChannelSkipCount",
+            0,
+        )
+        total_api_calls += summary.get("apiCallCount", 0)
+
+        if log_progress:
+            print(
+                f"batchProgress ok={ok_count} fail={fail_count} "
+                f"lastRegion={plan['code']} "
+                f"status={status_code} "
+                f"scopeFail={summary.get('failedScopeCount', 0)} "
+                f"chartHits={summary.get('chartHitCount', 0)} "
+                f"searchHits={summary.get('searchHitCount', 0)} "
+                f"videos={summary.get('videoSnapshotCount', 0)} "
+                f"dupVideos={summary.get('duplicateVideoSkipCount', 0)} "
+                f"dupChannels={summary.get('duplicateChannelSkipCount', 0)} "
+                f"apiCalls={summary.get('apiCallCount', 0)}"
+            )
+
+    final_status_code = 200 if ok_count > 0 else 502
+    batch_response = {
+        "statusCode": final_status_code,
+        "generatedAt": utc_now_iso(),
+        "version": SCRAPER_VERSION,
+        "mode": "full-run",
+        "request": {
+            "runAllRegions": True,
+            "regionCodes": requested_region_codes or [],
+            "outputStorage": output_storage,
+            "outputDir": output_dir,
+            "outputS3Bucket": output_s3_bucket,
+            "outputS3Prefix": output_s3_prefix,
+        },
+        "regionResults": region_results,
+        "summary": {
+            "regionCount": total_regions,
+            "successfulRegionCount": ok_count,
+            "failedRegionCount": fail_count,
+            "chartHitCount": total_chart_hits,
+            "searchHitCount": total_search_hits,
+            "videoSnapshotCount": total_video_snapshots,
+            "channelSnapshotCount": total_channel_snapshots,
+            "duplicateVideoSkipCount": total_duplicate_video_skips,
+            "duplicateChannelSkipCount": total_duplicate_channel_skips,
+            "apiCallCount": total_api_calls,
+        },
+        "savedFiles": {},
+    }
+    if save_to_file and save_bundle_file:
+        batch_summary_file = write_batch_summary_payload(
+            output_storage=output_storage,
+            output_dir=output_dir,
+            collected_at=batch_collected_at,
+            batch_run_id=batch_run_id,
+            payload=batch_response,
+            s3_bucket=output_s3_bucket,
+            s3_prefix=output_s3_prefix,
+        )
+        batch_response["savedFiles"]["batchSummaryFile"] = (
+            batch_summary_file
+        )
+    if log_progress:
+        print()
+        print(
+            f"completed regions={total_regions} ok={ok_count} "
+            f"fail={fail_count}"
+        )
+    if print_response:
+        print(json.dumps(batch_response, ensure_ascii=False, indent=2))
+    return batch_response
+
+
+def handler(event, context):
+    event = event or {}
+    load_local_env_if_present()
+    api_key = os.getenv("YOUTUBE_API_KEY")
+    if not api_key:
+        raise ValueError("YOUTUBE_API_KEY is not set")
+
+    if event.get("runAllRegions"):
+        return run_batch_scrape(event=event, api_key=api_key)
+
+    region_code = event.get("regionCode")
+    if not region_code:
+        response = build_overview_response()
+        if event.get("printResponse", False):
+            print(json.dumps(response, ensure_ascii=False, indent=2))
+        return response
+
+    region_plan = get_region_plan(region_code)
+    if not region_plan:
+        response = {
+            "statusCode": 404,
+            "generatedAt": utc_now_iso(),
+            "error": {"message": f"Unknown regionCode: {region_code}"},
+        }
+        if event.get("printResponse", False):
+            print(json.dumps(response, ensure_ascii=False, indent=2))
+        return response
+
+    return run_region_scrape(
+        event=event,
+        api_key=api_key,
+        region_plan=region_plan,
+    )
 
 
 if __name__ == "__main__":

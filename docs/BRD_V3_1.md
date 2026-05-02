@@ -329,14 +329,14 @@ V3.1에서도 raw stream 기본 구조는 유지합니다.
 - 현재 dedup은 `chart + search`를 함께 도는 run 내부 snapshot dedup까지 구현되어 있습니다
 - 터미널 progress 로그와 run summary에는 `dupVideos`, `dupChannels`가 함께 출력됩니다
 
-### 향후 추가 stream
+### Discovery stream 분리
 
-V3.1에서 broad search가 붙으면 discovery stream을 하나 더 둘 수 있습니다.
+V3.1에서는 broad search가 이미 붙어 있으므로 discovery stream은 2개입니다.
 
-예:
+- `youtube_chart_hits`
 - `youtube_search_hits`
 
-이 stream은 chart 기반 discovery와 분리해서 저장하는 것이 좋습니다.
+이 두 stream은 source 해석을 위해 분리 저장하는 것이 좋습니다.
 
 권장 저장 구조 예시:
 
@@ -349,6 +349,22 @@ outputs/youtube_scraper/
     channel_snapshots/date=YYYY-MM-DD/
     runs/date=YYYY-MM-DD/
 ```
+
+운영 전환 시에는 위 partition 구조를 Lambda에서 그대로 S3 prefix 아래에 미러링합니다.
+
+예:
+
+```text
+s3://promptfactory-data-trend/youtube_scraper/
+  region=KR/
+    chart_hits/date=YYYY-MM-DD/
+    search_hits/date=YYYY-MM-DD/
+    video_snapshots/date=YYYY-MM-DD/
+    channel_snapshots/date=YYYY-MM-DD/
+    runs/date=YYYY-MM-DD/
+```
+
+또한 daily scheduler run은 `runAllRegions=true` 이벤트를 통해 한 번에 전체 region을 실행하고, batch-level summary를 `batches/date=YYYY-MM-DD/*.json`로 별도 저장합니다.
 
 ## 후처리 모델
 

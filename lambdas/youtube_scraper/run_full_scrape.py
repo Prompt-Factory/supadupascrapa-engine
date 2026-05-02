@@ -1,13 +1,11 @@
 import argparse
-import time
 
 from handler import handler
-from v3_region_config import V3_REGION_PLANS
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run V3 mostPopular scrape for configured regions.",
+        description="Run V3.1 scrape for configured regions.",
     )
     parser.add_argument(
         "--region-code",
@@ -52,82 +50,32 @@ def main() -> None:
     if args.chart_only and args.search_only:
         raise SystemExit("Choose only one of --chart-only or --search-only")
 
-    targets = V3_REGION_PLANS
+    include_chart_lane = not args.search_only
+    include_search_lane = not args.chart_only
+
+    event = {
+        "logProgress": True,
+        "printResponse": False,
+        "includeOverallChart": include_chart_lane,
+        "includeCategoryCharts": include_chart_lane,
+        "includeSearchLane": include_search_lane,
+        "searchLookbackDays": args.search_lookback_days,
+        "saveToFile": not args.skip_save,
+        "saveSplitFiles": not args.skip_save,
+        "saveBundleFile": not args.skip_save,
+    }
+
     if args.region_code:
-        targets = [
-            plan
-            for plan in V3_REGION_PLANS
-            if plan["code"] == args.region_code.upper()
-        ]
-        if not targets:
-            raise SystemExit(f"Unknown region code: {args.region_code}")
+        event["regionCode"] = args.region_code.upper()
+    else:
+        event["runAllRegions"] = True
 
-    batch_started_at = time.time()
-    total_regions = len(targets)
-    ok_count = 0
-    fail_count = 0
+    if args.max_pages_per_scope:
+        event["maxPagesPerScope"] = args.max_pages_per_scope
+    if args.log_every_pages:
+        event["logEveryPages"] = args.log_every_pages
 
-    for index, plan in enumerate(targets, start=1):
-        started_at = time.time()
-        print()
-        print(
-            f"=== Region {index}/{total_regions}: {plan['code']} "
-            f"(tier {plan['tier']}) ==="
-        )
-        print(
-            f"target={plan['daily_target_videos']} "
-            f"overall={plan['overall_target_videos']} "
-            f"category={plan['category_target_videos']} "
-            f"allocations={len(plan['category_allocations'])}"
-        )
-        include_chart_lane = not args.search_only
-        include_search_lane = not args.chart_only
-        event = {
-            "regionCode": plan["code"],
-            "logProgress": True,
-            "printResponse": False,
-            "includeOverallChart": include_chart_lane,
-            "includeCategoryCharts": include_chart_lane,
-            "includeSearchLane": include_search_lane,
-            "searchLookbackDays": args.search_lookback_days,
-            "saveToFile": not args.skip_save,
-            "saveSplitFiles": not args.skip_save,
-            "saveBundleFile": not args.skip_save,
-        }
-        if args.max_pages_per_scope:
-            event["maxPagesPerScope"] = args.max_pages_per_scope
-        if args.log_every_pages:
-            event["logEveryPages"] = args.log_every_pages
-
-        response = handler(event, None)
-        status_code = response.get("statusCode")
-        elapsed = time.time() - started_at
-        summary = response.get("summary", {})
-        if status_code == 200:
-            ok_count += 1
-        else:
-            fail_count += 1
-
-        print(
-            f"batchProgress ok={ok_count} fail={fail_count} "
-            f"lastRegion={plan['code']} "
-            f"status={status_code} "
-            f"scopeFail={summary.get('failedScopeCount', 0)} "
-            f"chartHits={summary.get('chartHitCount', 0)} "
-            f"searchHits={summary.get('searchHitCount', 0)} "
-            f"videos={summary.get('videoSnapshotCount', 0)} "
-            f"dupVideos={summary.get('duplicateVideoSkipCount', 0)} "
-            f"dupChannels={summary.get('duplicateChannelSkipCount', 0)} "
-            f"apiCalls={summary.get('apiCallCount', 0)} "
-            f"elapsed={elapsed:.1f}s"
-        )
-
-    total_elapsed = time.time() - batch_started_at
-    print()
-    print(
-        f"completed regions={total_regions} ok={ok_count} fail={fail_count} "
-        f"elapsed={total_elapsed:.1f}s"
-    )
+    handler(event, None)
 
 
 if __name__ == "__main__":

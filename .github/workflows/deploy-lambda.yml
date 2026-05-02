@@ -70,10 +70,13 @@ jobs:
       LAMBDA_EXECUTION_ROLE_ARN: ${{ secrets.LAMBDA_EXECUTION_ROLE_ARN }}
       LAMBDA_HANDLER: ${{ vars.LAMBDA_HANDLER || 'handler.handler' }}
       LAMBDA_RUNTIME: ${{ vars.LAMBDA_RUNTIME || 'python3.12' }}
-      LAMBDA_TIMEOUT: ${{ vars.LAMBDA_TIMEOUT || '30' }}
-      LAMBDA_MEMORY_SIZE: ${{ vars.LAMBDA_MEMORY_SIZE || '256' }}
+      LAMBDA_TIMEOUT: ${{ vars.LAMBDA_TIMEOUT || '900' }}
+      LAMBDA_MEMORY_SIZE: ${{ vars.LAMBDA_MEMORY_SIZE || '1024' }}
       LAMBDA_SOURCE_DIR: ${{ matrix.source_dir }}
       LAMBDA_FUNCTION_NAME: ${{ matrix.function_name }}
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      OUTPUT_S3_BUCKET: ${{ vars.OUTPUT_S3_BUCKET || '' }}
+      OUTPUT_S3_PREFIX: ${{ vars.OUTPUT_S3_PREFIX || 'youtube_scraper/' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -108,12 +111,53 @@ jobs:
         run: |
           set -euo pipefail
           echo "Deploying ${LAMBDA_FUNCTION_NAME} from ${LAMBDA_SOURCE_DIR}"
+          DESIRED_ENVIRONMENT_JSON="$(python - <<'PY'
+          import json
+          import os
+
+          env = {}
+          for key in (
+              "YOUTUBE_API_KEY",
+              "OUTPUT_S3_BUCKET",
+              "OUTPUT_S3_PREFIX",
+          ):
+              value = os.getenv(key, "").strip()
+              if value:
+                  env[key] = value
+          print(json.dumps({"Variables": env}, separators=(",", ":")))
+          PY
+          )"
           if aws lambda get-function --function-name "$LAMBDA_FUNCTION_NAME" >/dev/null 2>&1; then
             echo "Lambda exists. Updating code..."
             aws lambda update-function-code \
               --function-name "$LAMBDA_FUNCTION_NAME" \
               --zip-file "fileb://build/lambda.zip" \
               --publish
+            CURRENT_ENVIRONMENT_JSON="$(aws lambda get-function-configuration \
+              --function-name "$LAMBDA_FUNCTION_NAME" \
+              --query 'Environment.Variables' \
+              --output json)"
+            MERGED_ENVIRONMENT_JSON="$(CURRENT_ENVIRONMENT_JSON="$CURRENT_ENVIRONMENT_JSON" python - <<'PY'
+            import json
+            import os
+
+            current = json.loads(os.environ["CURRENT_ENVIRONMENT_JSON"])
+            for key in (
+                "YOUTUBE_API_KEY",
+                "OUTPUT_S3_BUCKET",
+                "OUTPUT_S3_PREFIX",
+            ):
+                value = os.getenv(key, "").strip()
+                if value:
+                    current[key] = value
+            print(json.dumps({"Variables": current}, separators=(",", ":")))
+            PY
+            )"
+            aws lambda update-function-configuration \
+              --function-name "$LAMBDA_FUNCTION_NAME" \
+              --timeout "$LAMBDA_TIMEOUT" \
+              --memory-size "$LAMBDA_MEMORY_SIZE" \
+              --environment "$MERGED_ENVIRONMENT_JSON"
           else
             echo "Lambda does not exist. Creating function..."
             aws lambda create-function \
@@ -124,5 +168,6 @@ jobs:
               --zip-file "fileb://build/lambda.zip" \
               --timeout "$LAMBDA_TIMEOUT" \
               --memory-size "$LAMBDA_MEMORY_SIZE" \
+              --environment "$DESIRED_ENVIRONMENT_JSON" \
               --publish
           fi
