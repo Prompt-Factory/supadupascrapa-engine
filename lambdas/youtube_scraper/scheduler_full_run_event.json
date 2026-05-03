@@ -1,17 +1,16 @@
 {
-  "regionCode": "KR",
-  "maxResults": 50,
-  "maxPagesPerScope": 1,
+  "runAllRegions": true,
   "includeOverallChart": true,
   "includeCategoryCharts": true,
   "includeSearchLane": true,
   "includeChannelSnapshots": true,
   "searchLookbackDays": 7,
   "logProgress": true,
-  "logEveryPages": 1,
   "printResponse": false,
   "saveToFile": true,
   "saveSplitFiles": true,
   "saveBundleFile": true,
-  "outputDir": "outputs/youtube_scraper"
+  "outputStorage": "s3",
+  "outputS3Bucket": "promptfactory-data-trend",
+  "outputS3Prefix": "youtube_scraper/"
 }

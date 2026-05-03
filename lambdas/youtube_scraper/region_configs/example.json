@@ -1,0 +1,86 @@
+{
+  "_purpose": "설명용 예시 파일입니다. 실제 로더에서는 무시됩니다.",
+  "_notes": [
+    "이 파일은 사람용 템플릿입니다.",
+    "실제 운영에 쓰려면 이 파일을 복사해서 KR.json 같은 국가 코드 파일명으로 저장하세요.",
+    "overall_ratio 와 category_ratio 의 합은 반드시 1.0 이어야 합니다.",
+    "preferred_video_category_ids 는 해당 region 에서 실제로 지원되는 category id 만 넣는 것을 권장합니다."
+  ],
+  "field_guide": {
+    "code": "YouTube regionCode 와 같은 2자리 국가 코드. 예: KR, US, JP",
+    "labels.en": "영문 국가명",
+    "labels.ko": "한글 국가명",
+    "tier": "우선순위 tier. 1, 2, 3, 4 중 하나",
+    "daily_target_videos": "이 region 에서 하루에 목표로 수집할 chart lane reserve 영상 수",
+    "overall_ratio": "region 전체 mostPopular 차트에 배정할 비율",
+    "category_ratio": "videoCategoryId 기반 차트에 배정할 비율",
+    "preferred_video_category_ids": "카테고리 차트 수집에 우선 사용할 YouTube videoCategoryId 목록",
+    "category_allocations": "선택 필드. category bucket 내부에서 각 카테고리에 얼마를 배분할지 지정합니다. 없으면 equal split 으로 계산합니다.",
+    "_reference_video_categories": "사람이 참고하는 필드. assignable=true/false 목록을 넣어도 되고, 로더는 무시함",
+    "_chart_support_reference": "사람이 참고하는 필드. 실제 mostPopular category chart 지원 여부를 기록할 수 있고, 로더는 무시함"
+  },
+  "example_region_config": {
+    "code": "KR",
+    "labels": {
+      "en": "South Korea",
+      "ko": "한국"
+    },
+    "tier": 1,
+    "daily_target_videos": 1500,
+    "overall_ratio": 0.5,
+    "category_ratio": 0.5,
+    "preferred_video_category_ids": [
+      "1",
+      "22",
+      "24",
+      "26",
+      "28"
+    ],
+    "category_allocations": [
+      {
+        "id": "1",
+        "label": "영화/애니메이션",
+        "weight": 0.12,
+        "reason": "브랜드필름/시네마틱 포맷 탐색용"
+      },
+      {
+        "id": "22",
+        "label": "인물/블로그",
+        "weight": 0.22,
+        "reason": "브이로그/인터뷰/협업 포맷 탐색용"
+      },
+      {
+        "id": "24",
+        "label": "엔터테인먼트",
+        "weight": 0.30,
+        "reason": "가장 넓은 포맷 탐색용"
+      },
+      {
+        "id": "26",
+        "label": "노하우/스타일",
+        "weight": 0.22,
+        "reason": "뷰티/패션/라이프스타일 포맷 탐색용"
+      },
+      {
+        "id": "28",
+        "label": "과학기술",
+        "weight": 0.14,
+        "reason": "앱/서비스/테크 제품 포맷 탐색용"
+      }
+    ],
+    "_chart_support_reference": {
+      "_note": "예시입니다. 실제 지역별 지원 여부는 API로 확인해 채워 넣으세요.",
+      "most_popular_supported": [
+        {"id": "1", "label": "영화/애니메이션"},
+        {"id": "22", "label": "인물/블로그"},
+        {"id": "24", "label": "엔터테인먼트"},
+        {"id": "26", "label": "노하우/스타일"},
+        {"id": "28", "label": "과학기술"}
+      ],
+      "most_popular_unsupported": [
+        {"id": "19", "label": "여행/이벤트"},
+        {"id": "27", "label": "교육"}
+      ]
+    }
+  }
+}
