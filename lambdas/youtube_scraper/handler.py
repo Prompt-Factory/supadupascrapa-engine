@@ -7,6 +7,10 @@ from typing import Any
 from broad_search_seed_config import (
     BROAD_SEARCH_REGION_PLANS,
 )
+from slack_result_notifier import (
+    send_slack_result_notification,
+    should_send_slack_result,
+)
 from utils import (
     JsonlOutputWriter,
     build_chart_hit_records,
@@ -1298,12 +1302,34 @@ def run_batch_scrape(
         batch_response["savedFiles"]["batchSummaryFile"] = (
             batch_summary_file
         )
+    if should_send_slack_result(event):
+        try:
+            slack_notification = send_slack_result_notification(
+                batch_response=batch_response,
+                event=event,
+            )
+        except Exception as exc:
+            slack_notification = {
+                "ok": False,
+                "skipped": False,
+                "reason": str(exc),
+            }
+        batch_response["slackNotification"] = slack_notification
     if log_progress:
         print()
         print(
             f"completed regions={total_regions} ok={ok_count} "
             f"fail={fail_count}"
         )
+        if batch_response.get("slackNotification") is not None:
+            slack_notification = batch_response["slackNotification"]
+            print(
+                "slackNotification "
+                f"ok={slack_notification.get('ok')} "
+                f"skipped={slack_notification.get('skipped', False)} "
+                f"function={slack_notification.get('functionName', '')} "
+                f"channel={slack_notification.get('channel', '')}"
+            )
     if print_response:
         print(json.dumps(batch_response, ensure_ascii=False, indent=2))
     return batch_response
