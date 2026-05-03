@@ -118,6 +118,8 @@ jobs:
               --function-name "$LAMBDA_FUNCTION_NAME" \
               --zip-file "fileb://build/lambda.zip" \
               --publish
+            aws lambda wait function-updated-v2 \
+              --function-name "$LAMBDA_FUNCTION_NAME"
             CURRENT_ENVIRONMENT_JSON="$(aws lambda get-function-configuration \
               --function-name "$LAMBDA_FUNCTION_NAME" \
               --query 'Environment.Variables' \
@@ -128,6 +130,8 @@ jobs:
               --timeout "$LAMBDA_TIMEOUT" \
               --memory-size "$LAMBDA_MEMORY_SIZE" \
               --environment "$MERGED_ENVIRONMENT_JSON"
+            aws lambda wait function-updated-v2 \
+              --function-name "$LAMBDA_FUNCTION_NAME"
           else
             echo "Lambda does not exist. Creating function..."
             aws lambda create-function \
@@ -140,4 +144,6 @@ jobs:
               --memory-size "$LAMBDA_MEMORY_SIZE" \
               --environment "$DESIRED_ENVIRONMENT_JSON" \
               --publish
+            aws lambda wait function-active-v2 \
+              --function-name "$LAMBDA_FUNCTION_NAME"
           fi
