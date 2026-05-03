@@ -421,6 +421,8 @@ GitHub Actions 워크플로: `.github/workflows/deploy-lambda.yml`
 - `LAMBDA_MEMORY_SIZE` 기본값: `1024`
 - `OUTPUT_S3_BUCKET` 예시: `promptfactory-data-trend`
 - `OUTPUT_S3_PREFIX` 기본값: `youtube_scraper/`
+- `SLACK_NOTIFIER_FUNCTION_NAME` 예시: `supadupascrapa-slack_notifier`
+- `SLACK_RESULT_CHANNEL` 예시: `magi-trend-data-collector`
 
 ## IAM Roles
 
@@ -443,6 +445,9 @@ IAM Role은 2개가 필요합니다.
   - `s3:AbortMultipartUpload`
   - `s3:ListBucketMultipartUploads`
   - 대상 bucket: `promptfactory-data-trend`
+- Slack 결과 알림을 위해 추가 필요 권한:
+  - `lambda:InvokeFunction`
+  - 대상 함수: `supadupascrapa-slack_notifier`
 
 ## EventBridge Scheduler
 
@@ -480,3 +485,15 @@ cron(0 13 * * ? *)
 주의:
 - Scheduler 실행 role은 `scheduler.amazonaws.com`을 신뢰해야 합니다
 - Scheduler role에는 대상 Lambda ARN에 대한 `lambda:InvokeFunction` 권한이 필요합니다
+
+## Slack Result Notification
+
+`youtube_scraper` full run이 끝나면 별도 Slack notifier Lambda를 호출해 결과 요약을 보낼 수 있습니다.
+
+필요 환경변수:
+- `SLACK_NOTIFIER_FUNCTION_NAME`
+- `SLACK_RESULT_CHANNEL`
+
+동작:
+- 모든 region이 성공하면 성공 요약 메시지를 보냅니다
+- 일부 region 또는 scope가 실패하면 실패 region과 에러 메시지를 함께 보냅니다
