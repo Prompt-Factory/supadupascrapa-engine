@@ -111,12 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Deploying ${LAMBDA_FUNCTION_NAME} from ${LAMBDA_SOURCE_DIR}"
-          DESIRED_ENVIRONMENT_JSON="$(python -c 'import json, os; env = {}; 
-for key in ("YOUTUBE_API_KEY", "OUTPUT_S3_BUCKET", "OUTPUT_S3_PREFIX"):
-    value = os.getenv(key, "").strip()
-    if value:
-        env[key] = value
-print(json.dumps({"Variables": env}, separators=(",", ":")))' )"
+          DESIRED_ENVIRONMENT_JSON="$(python -c 'import json, os; env = {}; [env.__setitem__(k, v) for k in ("YOUTUBE_API_KEY", "OUTPUT_S3_BUCKET", "OUTPUT_S3_PREFIX") if (v := os.getenv(k, "").strip())]; print(json.dumps({"Variables": env}, separators=(",", ":")))' )"
           if aws lambda get-function --function-name "$LAMBDA_FUNCTION_NAME" >/dev/null 2>&1; then
             echo "Lambda exists. Updating code..."
             aws lambda update-function-code \
@@ -127,12 +122,7 @@ print(json.dumps({"Variables": env}, separators=(",", ":")))' )"
               --function-name "$LAMBDA_FUNCTION_NAME" \
               --query 'Environment.Variables' \
               --output json)"
-            MERGED_ENVIRONMENT_JSON="$(CURRENT_ENVIRONMENT_JSON="$CURRENT_ENVIRONMENT_JSON" python -c 'import json, os; current = json.loads(os.environ["CURRENT_ENVIRONMENT_JSON"]); 
-for key in ("YOUTUBE_API_KEY", "OUTPUT_S3_BUCKET", "OUTPUT_S3_PREFIX"):
-    value = os.getenv(key, "").strip()
-    if value:
-        current[key] = value
-print(json.dumps({"Variables": current}, separators=(",", ":")))' )"
+            MERGED_ENVIRONMENT_JSON="$(CURRENT_ENVIRONMENT_JSON="$CURRENT_ENVIRONMENT_JSON" python -c 'import json, os; current = json.loads(os.environ["CURRENT_ENVIRONMENT_JSON"]); [current.__setitem__(k, v) for k in ("YOUTUBE_API_KEY", "OUTPUT_S3_BUCKET", "OUTPUT_S3_PREFIX") if (v := os.getenv(k, "").strip())]; print(json.dumps({"Variables": current}, separators=(",", ":")))' )"
             aws lambda update-function-configuration \
               --function-name "$LAMBDA_FUNCTION_NAME" \
               --timeout "$LAMBDA_TIMEOUT" \
